@@ -1,0 +1,3101 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║  ABSOLUTE DOLLAR AGENT — ADSA v8.0                                           ║
+// ║  Augmented Intelligence Protocol                                             ║
+// ║  © Absolute Dollar Intelligence 2026 | All Rights Reserved                   ║
+// ╠══════════════════════════════════════════════════════════════════════════════╣
+// ║  CODENAME  : ABSOLUTE DOLLAR AGENT (ADA)                                     ║
+// ║  EDITION   : Super Admin — Invite Only                                       ║
+// ║  VERSION   : Pine Script v6 — Supreme Merge Build | Claw Protocol Edition    ║
+// ╠══════════════════════════════════════════════════════════════════════════════╣
+// ║  ARCHITECTURE (23 Subsystems):                                               ║
+// ║  [1]  Fractal 4-Layer Consensus (Sovereign/Anchor/Filter/Exec)              ║
+// ║  [2]  Composite 5-Timeframe Scoring Engine (+15 to -15)                    ║
+// ║  [3]  Glass Box Alert Architecture (rich reasoning per event)               ║
+// ║  [4]  Trade Progression Engine (TP1/TP2/TP3/Holder Mode)                   ║
+// ║  [5]  SL Autopsy Engine (contextual transparent loss narrative)             ║
+// ║  [6]  Signal Rejection Reports (regime filter explainer)                    ║
+// ║  [7]  SMC Engine (BOS/CHoCH/OB/FVG/EQH-EQL/Premium-Discount/Liquidity)    ║
+// ║  [8]  Adaptive VWAP + Volume Profile + Fibonacci Bands                      ║
+// ║  [9]  Platinum Risk Model (auto SL/TP + real-world asset-routed sizing)     ║
+// ║  [10] Dual Telegram Broadcast (Premium War Room + Public Channel)           ║
+// ║  [11] Super Admin Control Panel (Bias/Silence/Override/Asset Note)          ║
+// ║  [12] Trade ID Engine (ATM-YYYYMMDD-HHMM-DIR-N)                            ║
+// ║  [13] Pip Tracker (actual vs expected, daily reset, profit factor)          ║
+// ║  [14] Performance Table (5-col dual table with ELITE/STRONG ratings)        ║
+// ║  [15] Daily Report Engine (full trade log + ML data block)                  ║
+// ║  [16] *** NEW: Live Dollar P&L Tracker (quote-currency, per-bar update)    ║
+// ║  [17] *** NEW: PDH/PDL Context Engine + Tree-Format AI Narrative            ║
+// ║  [18] *** NEW: Claw Liquidity Trail Engine (MTF: M5/M15/H1 direction)      ║
+// ║  [19] *** NEW: Confidence Engine (weighted score gate, Claw Mode)            ║
+// ║  [20] *** NEW: Smart RSI Momentum Signals (extreme zone 75+/25-)             ║
+// ║  [21] *** NEW: Fib Trend Gate (optional, like VWAP — builds confidence)      ║
+// ║  [22] *** NEW: TradeSgnl BE + Trail Automation (auto-modify on TP1/TP2)      ║
+// ║  [23] *** NEW: Orphan Trade Fix (dpt reversal close on new signal)           ║
+// ╠══════════════════════════════════════════════════════════════════════════════╣
+// ║  MERGE LOG v7.0 — SUPREME AGENT ADDITIONS                                  ║
+// ║  [+] Live Dollar P&L on active trade (price_diff × position_size ×        ║
+// ║      contract_notional, routed through existing asset router)               ║
+// ║  [+] PDH/PDL Context: Previous Day High/Low displayed in dashboard          ║
+// ║      with status: Above PDH / Below PDL / Inside Daily Range                ║
+// ║  [+] Tree-Format AI Narrative: ├── / │ / └── structured multi-TF view      ║
+// ║      replaces flat R=/V=/F= rows — all 5 layers with RSI + score icon       ║
+// ║  [+] Tree narrative also injected into War Room Telegram broadcast          ║
+// ║  BASE: SA-GAIP v6.1 (all risk router bug fixes intact)                     ║
+// ╠══════════════════════════════════════════════════════════════════════════════╣
+// ║  BUG FIX (inherited from v6.1) — RISK MODEL ASSET ROUTER                  ║
+// ║  FIXED: _risk_at_min_lot() was using forex math universally →              ║
+// ║  10,000x leverage on crypto/ETH/BTC. All sizing routes through             ║
+// ║  _get_contract_notional() single source of truth.                           ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+//@version=6
+strategy("Absolute Dollar Agent v8", shorttitle="$ Agent", overlay=true,
+     max_labels_count=500, max_lines_count=500, max_bars_back=5000, max_boxes_count=500,
+     max_polylines_count=100)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 1 — CONSTANTS & TYPES
+// ══════════════════════════════════════════════════════════════════════════════
+const int BULLISH_LEG   = 1
+const int BEARISH_LEG   = 0
+const int BULLISH       = 1
+const int BEARISH       = -1
+const string HISTORICAL = 'Historical'
+const string PRESENT    = 'Present'
+const string COLORED    = 'Colored'
+const string MONOCHROME = 'Monochrome'
+const string ALL        = 'All'
+const string BOS        = 'BOS'
+const string CHOCH      = 'CHoCH'
+const string TINY       = size.tiny
+const string SMALL      = size.small
+const string NORMAL     = size.normal
+const string ATR        = 'Atr'
+const string RANGE      = 'Cumulative Mean Range'
+const string CLOSE      = 'Close'
+const string HIGHLOW    = 'High/Low'
+const string SOLID      = '⎯⎯⎯'
+const string DASHED     = '----'
+const string DOTTED     = '····'
+
+const color GREEN        = #089981
+const color RED          = #F23645
+const color BLUE         = #2157f3
+const color GRAY         = #878b94
+const color MONO_BULLISH = #b2b5be
+const color MONO_BEARISH = #5d606b
+const color GOLD         = #FFD700
+
+type alerts
+    bool internalBullishBOS         = false
+    bool internalBearishBOS         = false
+    bool internalBullishCHoCH       = false
+    bool internalBearishCHoCH       = false
+    bool swingBullishBOS            = false
+    bool swingBearishBOS            = false
+    bool swingBullishCHoCH          = false
+    bool swingBearishCHoCH          = false
+    bool internalBullishOrderBlock  = false
+    bool internalBearishOrderBlock  = false
+    bool swingBullishOrderBlock     = false
+    bool swingBearishOrderBlock     = false
+    bool equalHighs                 = false
+    bool equalLows                  = false
+    bool bullishFairValueGap        = false
+    bool bearishFairValueGap        = false
+
+type trailingExtremes
+    float top
+    float bottom
+    int barTime
+    int barIndex
+    int lastTopTime
+    int lastBottomTime
+
+type fairValueGap
+    float top
+    float bottom
+    int bias
+    box topBox
+    box bottomBox
+
+type trend
+    int bias
+
+type equalDisplay
+    line l_ine   = na
+    label l_abel = na
+
+type pivot
+    float currentLevel
+    float lastLevel
+    bool crossed
+    int barTime  = time
+    int barIndex = bar_index
+
+type orderBlock
+    float barHigh
+    float barLow
+    int barTime
+    int bias
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 2 — INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── SUPER ADMIN CONTROL PANEL ─────────────────────────────────────────────────
+grpAdmin          = "🔐 SUPER ADMIN CONTROL PANEL"
+sovereign_tf      = input.timeframe("D",    "👑 Sovereign TF (Daily Commander)", group=grpAdmin,
+     tooltip="The macro veto layer. Daily bearish = longs flagged counter-trend.")
+admin_manual_bias = input.string("AUTO",    "📡 Manual Bias Override",
+     options=["AUTO","FORCE BULL","FORCE BEAR","SILENCE"],                        group=grpAdmin,
+     tooltip="SILENCE suppresses all alerts. FORCE = manual broadcast override.")
+asset_context     = input.string("",        "📌 Asset Context (Watchlist Note)", group=grpAdmin,
+     tooltip="e.g. 'GOLD — London breakout watch'. Appended to all Telegram alerts.")
+admin_commentary  = input.string("",        "💬 Operator Commentary",             group=grpAdmin,
+     tooltip="Your personal analysis. Appended to WAR ROOM alerts only.")
+tg_public_sanitize= input.bool(true,        "🔒 Sanitize Public Channel",         group=grpAdmin,
+     tooltip="ON = Public gets signal type + bias only. War Room gets full Glass Box report.")
+
+// ── TELEGRAM DUAL BROADCAST ───────────────────────────────────────────────────
+grpTG          = "📱 Telegram Broadcast"
+enable_tg_1    = input.bool(true,  "✅ Premium / War Room",  group=grpTG, inline="tg1")
+tg_chat_id_1   = input.string("",  "Chat ID (Premium)",       group=grpTG, inline="tg1",
+     tooltip="Full Glass Box: trade params, autopsy, commentary.")
+enable_tg_2    = input.bool(true,  "✅ Public / Free",         group=grpTG, inline="tg2")
+tg_chat_id_2   = input.string("",  "Chat ID (Public)",         group=grpTG, inline="tg2",
+     tooltip="Sanitized: direction + session + bias. No levels.")
+tg_1_active    = enable_tg_1 and tg_chat_id_1 != ""
+tg_2_active    = enable_tg_2 and tg_chat_id_2 != ""
+
+// ── BITGET SIGNAL BOT ─────────────────────────────────────────────────────────
+grpBitget      = "🤖 Bitget Signal Bot"
+enable_bitget  = input.bool(false, "✅ Enable Bitget Webhook", group=grpBitget,
+     tooltip="Create a TradingView alert with Webhook URL = your Bitget URL.")
+
+// ── FRACTAL 4-LAYER PROTOCOL ─────────────────────────────────────────────────
+grpSync   = "🧠 Fractal 4-Layer Protocol"
+anchor_tf = input.timeframe("60", "⚓ Layer 2 — Anchor TF (Commander)", group=grpSync)
+filter_tf = input.timeframe("15",  "🧭 Layer 3 — Filter TF (Navigator)", group=grpSync)
+
+// ── ATM BOT ───────────────────────────────────────────────────────────────────
+grpATM = "🤖 ATM Bot Settings"
+a_buy              = input.float(3.5,  "🚀 Buy Sensitivity",           group=grpATM, minval=0)
+c_buy              = input.int(2,      "📊 Buy ATR Period",             group=grpATM, minval=0)
+a_sell             = input.float(3.5,  "🔻 Sell Sensitivity",          group=grpATM, minval=0)
+c_sell             = input.int(2,      "📊 Sell ATR Period",            group=grpATM, minval=0)
+showTrailBuy       = input.bool(false, "👁 Show Buy Trail",             group=grpATM)
+showTrailSell      = input.bool(false, "👁 Show Sell Trail",            group=grpATM)
+enableRegimeFilter = input.bool(true,  "🔒 Enable Regime Filter",       group=grpATM)
+requireVWAP        = input.bool(false,  "📈 Require VWAP Confirmation",  group=grpATM)
+requireFibTrend    = input.bool(true,  "🌀 Require Fib Trend Gate",     group=grpATM,
+     tooltip="When ON, Fib trend must confirm direction. Adds confluence — does NOT hard-gate; agent can still fire if other confluences are strong.")
+useAgentAlerts     = input.bool(true,  "📢 Activate Glass Box Reports", group=grpATM,
+     tooltip="Structured reasoning report per event. Set Message = {{alert_message}} in TradingView Alert.")
+
+// ── CLAW LIQUIDITY TRAIL ──────────────────────────────────────────────────────
+grpClaw        = "🦞 Claw Liquidity Trail"
+claw_ma_len    = input.int(200,  "Trail MA Length",    group=grpClaw, minval=10, maxval=500)
+claw_atr_len   = input.int(14,   "Trail ATR Length",   group=grpClaw, minval=1,  maxval=50)
+claw_atr_mult  = input.float(1.25,"Trail ATR Mult",    group=grpClaw, minval=0.5,maxval=5.0,step=0.25)
+showClawTrail  = input.bool(false,"👁 Show Claw Trail", group=grpClaw)
+
+// ── CONFIDENCE ENGINE ─────────────────────────────────────────────────────────
+grpConf         = "🧠 Confidence Engine"
+claw_mode       = input.string("Moderate","Confidence Mode",
+     options=["Conservative","Moderate","Aggressive","Custom"],group=grpConf,
+     tooltip="Conservative=80%, Moderate=60%, Aggressive=40%. Agent executes when confidence ≥ threshold. Does not block signals — shows confidence status.")
+claw_custom_thr = input.int(60,"Custom Threshold %",group=grpConf,minval=0,maxval=100)
+claw_mtf_wt    = input.float(1.5,"MTF Trail Weight",    group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_rsi_wt    = input.float(1.0,"RSI Weight",          group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_vwap_wt   = input.float(1.0,"VWAP Weight",         group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_fib_wt    = input.float(0.5,"Fib Weight",          group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_vp_wt     = input.float(0.5,"VP Weight",           group=grpConf,minval=0,maxval=3.0,step=0.25)
+claw_struct_wt = input.float(1.0,"SMC Structure Weight",group=grpConf,minval=0,maxval=3.0,step=0.25)
+enable_smart_signals  = input.bool(true,"🧠 Smart RSI Momentum Signals",group=grpConf,
+     tooltip="Smart signals fire when RSI hits extreme zones (configurable). M5+exec timeframe confirmation.")
+rsi_extreme_bull      = input.int(70,"Smart Bull RSI ≥",group=grpConf,minval=55,maxval=85)
+rsi_extreme_bear      = input.int(30,"Smart Bear RSI ≤",group=grpConf,minval=20,maxval=45)
+use_m5_rsi_confirm    = input.bool(true,"M5 RSI Confirmation",group=grpConf)
+
+// ── TRADESGNL AUTOMATION ──────────────────────────────────────────────────────
+grpTS_auto     = "🤖 TradeSgnl Automation"
+ts_be_on_tp1   = input.bool(true, "✅ Auto BE on TP1 Hit",  group=grpTS_auto,
+     tooltip="Sends modifybuy/sell to move SL to entry + buffer when TP1 is hit.")
+ts_trail_on_tp2 = input.bool(true,"✅ Auto Trail on TP2 Hit",group=grpTS_auto,
+     tooltip="Sends trailing stop modify when TP2 is hit. EA manages the trail on MT5.")
+ts_be_buffer_pts = input.float(5.0,"BE Buffer (pts beyond entry)",group=grpTS_auto,step=0.5)
+ts_long_be_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,sl_price={{be_price}}",
+     "Long BE Modify",group=grpTS_auto)
+ts_short_be_msg = input.string("LICENSE_ID,{{ticker}},modifysell,sl_price={{be_price}}",
+     "Short BE Modify",group=grpTS_auto)
+ts_long_trail_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Long Trail Modify",group=grpTS_auto)
+ts_short_trail_msg = input.string("LICENSE_ID,{{ticker}},modifysell,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Short Trail Modify",group=grpTS_auto)
+
+// ── RISK MANAGEMENT ───────────────────────────────────────────────────────────
+grpRisk        = "💰 Risk Management"
+risk_per_trade = input.float(15.0, "💵 Risk Per Trade ($)",          group=grpRisk,
+     tooltip="Dollar amount risked. Used for variable position sizing.")
+sl_buffer_atr  = input.float(1.5,  "📏 SL Buffer (ATR Multiplier)",  group=grpRisk, step=0.1)
+show_risk_info = input.bool(true,  "Show Min-Unit Actual Risk",        group=grpRisk,
+     tooltip="Shows estimated dollar risk at minimum trade unit alongside variable sizing.")
+prevent_reversals = input.bool(false, "🚫 Strict One-Trade Rule",       group=grpRisk,
+     tooltip="Prevents taking opposing valid signals if the current trade has NOT hit its Stop Loss or Trail Exit. Guaranteeing absolutely no hedging.")
+holder_trail_type = input.string("Structural", "🏃 Holder Mode Trail", options=["VWAP", "Structural"], group=grpRisk,
+     tooltip="Trailing mechanism for remaining runners after TP3 is hit. Structural trails the pivot lows/highs.")
+
+// ── LINREG ────────────────────────────────────────────────────────────────────
+grpLinReg     = "📐 LinReg Settings"
+signal_length = input.int(21,    "Signal Smoothing", minval=1, maxval=200, group=grpLinReg)
+sma_signal    = input.bool(true,  "Simple MA Signal",                       group=grpLinReg)
+lin_reg       = input.bool(false, "Use LinReg Candles",                     group=grpLinReg,
+     tooltip="Warning: LinReg Candles repaint history by definition.")
+linreg_length = input.int(11,    "LinReg Length",    minval=1, maxval=200, group=grpLinReg)
+
+// ── LONGEVITY ZONES ───────────────────────────────────────────────────────────
+grpZones        = "⏳ Longevity Zones"
+showZones       = input.bool(true, "Show Zones",      group=grpZones)
+len_z           = input.int(5,      "Zone Length",     group=grpZones)
+col_upper       = input.color(color.new(color.red,   75), "Upper Color", group=grpZones)
+col_lower       = input.color(color.new(color.green, 75), "Lower Color", group=grpZones)
+lab_pos         = input.string("LastBar", "Label Position", options=["Root","LastBar"], group=grpZones)
+labelOffsetBars = input.int(10, "Label Offset", group=grpZones, minval=10, maxval=500)
+
+// ── ADAPTIVE VWAP ─────────────────────────────────────────────────────────────
+grp_vwap     = "📈 Adaptive VWAP"
+prd          = input.int(100,    "Swing Period",       minval=2,   group=grp_vwap)
+baseAPT      = input.float(20,  "Adaptive Tracking",  minval=1,   step=1, group=grp_vwap)
+useAdapt     = input.bool(false,"Adapt by ATR",                   group=grp_vwap)
+volBias_vwap = input.float(10.0,"Volatility Bias",    minval=0.1, step=0.1, group=grp_vwap)
+S_vwap       = input.color(color.lime, "Uptrend Color",           group=grp_vwap)
+R_vwap       = input.color(color.red,  "Downtrend Color",         group=grp_vwap)
+xx_vwap      = input.int(2, "Line Width", minval=1,               group=grp_vwap)
+
+// ── FIBONACCI BANDS ───────────────────────────────────────────────────────────
+grp_fib    = "📊 Fibonacci Bands"
+src_fib    = input.source(hlc3, "Source",     group=grp_fib)
+len_fib    = input.int(200,      "Length",     group=grp_fib)
+atrLen_fib = input.int(14,      "ATR Length", group=grp_fib)
+useATR_fib = input.bool(true,   "Use ATR",    group=grp_fib)
+
+// ── RSI MOMENTUM ─────────────────────────────────────────────────────────────
+grpRSI        = "📈 RSI Momentum"
+rsiLen        = input.int(14,    "RSI Length",      group=grpRSI)
+pmom          = input.int(55,    "Positive Above",  group=grpRSI)
+nmom          = input.int(50,    "Negative Below",  group=grpRSI)
+showRSIlabels = input.bool(false,"Show RSI Labels", group=grpRSI)
+filleshow     = input.bool(false,"Show Background", group=grpRSI)
+
+// ── VOLUME PROFILE ────────────────────────────────────────────────────────────
+grpVP         = "📊 Volume Profile"
+vpEnabled     = input.bool(true,       "Enable Volume Profile",                     group=grpVP)
+vpSessionType = input.string('Daily',  "Session Type",
+     options=['Tokyo','London','New York','Daily','Weekly','Monthly','Quarterly','Yearly'], group=grpVP)
+vpResolution  = input.int(30,          "Resolution", minval=5,                       group=grpVP)
+vpVAwidth     = input.int(70,          "Value Area Volume %", minval=1, maxval=100,  group=grpVP)
+vpDisplayMode = input.string('Mode 2', "Bar Mode", ['Mode 1','Mode 2','Mode 3'],     group=grpVP)
+vpVolType     = input.string('Volume', "Profile Data Type",
+     options=['Volume','Open Interest'],                                              group=grpVP)
+vpSmoothVol   = input.bool(false,      "Smooth Volume Data",                        group=grpVP)
+vpShowProfile = input.bool(true,       "Show Volume Profile", inline="vp1",         group=grpVP)
+vpShowPOC     = input.bool(true,       "Show POC",            inline="vp1",         group=grpVP)
+vpShowVA      = input.bool(true,       "Show VAH/VAL",        inline="vp2",         group=grpVP)
+vpShowVAbox   = input.bool(false,      "Show Value Area Box", inline="vp2",         group=grpVP)
+vpShowCurrent = input.bool(true,       "Show Live Zone",                            group=grpVP)
+vpShowLabels  = input.bool(false,       "Show Session Labels",                       group=grpVP)
+vpBullCol     = input.color(color.rgb(76,175,79,50),    "Up Volume",                group=grpVP)
+vpBearCol     = input.color(color.rgb(255,82,82,50),    "Down Volume",              group=grpVP)
+vpVAboxCol    = input.color(color.rgb(107,159,255,90),  "Value Area Box",           group=grpVP)
+vpPOCcolor    = input.color(color.red,  "POC Color", inline="vpc1",                group=grpVP)
+vpPOCwidth    = input.int(1,            "POC Width", inline="vpc1",                group=grpVP)
+vpVAHcolor    = input.color(color.aqua, "VAH Color", inline="vpc2",                group=grpVP)
+vpVAHwidth    = input.int(1,            "VAH Width", inline="vpc2",                group=grpVP)
+vpVALcolor    = input.color(color.aqua, "VAL Color", inline="vpc3",                group=grpVP)
+vpVALwidth    = input.int(1,            "VAL Width", inline="vpc3",                group=grpVP)
+
+// ── DASHBOARD ─────────────────────────────────────────────────────────────────
+grpDash        = "📊 Dashboard"
+dashOn         = input.bool(true,  "✅ Show Dashboard",                    group=grpDash)
+dashColor      = input.color(color.new(#8fd46d, 80), "🎨 Panel Background", group=grpDash)
+dashTextColor  = input.color(color.black,             "📝 Text Color",      group=grpDash)
+panelPlacement = input.string("Top-Right", "📍 Placement",
+     options=["Top-Right","Top-Left","Bottom-Right","Bottom-Left","Bottom-Center"], group=grpDash)
+showPerfPanel  = input.bool(true,  "Show Performance Table",               group=grpDash)
+tz_offset_hours = input.int(3,    "🕐 UTC Offset (3=Nairobi/EAT)",         group=grpDash, minval=-12, maxval=14, tooltip="UTC+3=Nairobi/EAT  UTC+0=London  UTC+2=Cairo  UTC+5:30=India  UTC+8=SGT  UTC-5=EST")
+tz_label        = input.string("EAT", "Timezone Label",                    group=grpDash, tooltip="Short label shown on dashboard, e.g. EAT, WAT, SGT, EST")
+
+// ── OSCILLATORS ───────────────────────────────────────────────────────────────
+grpOsc        = "📉 Oscillators"
+macdFastLen   = input.int(12,"MACD Fast",    group=grpOsc)
+macdSlowLen   = input.int(26,"MACD Slow",    group=grpOsc)
+macdSignalLen = input.int(9, "MACD Signal",  group=grpOsc)
+stochLen      = input.int(14,"Stoch Length", group=grpOsc)
+stochK        = input.int(3, "Stoch K",      group=grpOsc)
+stochD        = input.int(3, "Stoch D",      group=grpOsc)
+volMaLen      = input.int(20,"Volume MA",    group=grpOsc)
+
+// ── DAILY REPORT ENGINE ───────────────────────────────────────────────────────
+grpReport         = "📊 Daily Performance Report"
+report_enabled    = input.bool(true, "✅ Enable Daily Report",     group=grpReport)
+report_hour_utc   = input.int(21,    "⏰ Report Hour (UTC)",        group=grpReport, minval=0, maxval=23)
+report_to_premium = input.bool(true, "Send to War Room (Chat 1)",  group=grpReport, inline="rch")
+report_to_public  = input.bool(false,"Send to Public (Chat 2)",    group=grpReport, inline="rch")
+
+// ── SMC INPUTS ────────────────────────────────────────────────────────────────
+SMART_GROUP    = '[SMC] ⚙️ General'
+INTERNAL_GROUP = '[SMC] 🔍 Internal Structure'
+SWING_GROUP    = '[SMC] 🔄 Swing Structure'
+BLOCKS_GROUP   = '[SMC] 🧱 Order Blocks'
+EQUAL_GROUP    = '[SMC] ⚖️ EQH/EQL'
+GAPS_GROUP     = '[SMC] 🕳️ Fair Value Gaps'
+LEVELS_GROUP   = '[SMC] 📐 Highs & Lows MTF'
+ZONES_GROUP    = '[SMC] 💰 Premium & Discount'
+LIQ_GROUP      = '[Liquidity] 💧 Swings & Volume'
+
+modeInput      = input.string(HISTORICAL, 'Mode',  group=SMART_GROUP, options=[HISTORICAL,PRESENT])
+styleInput     = input.string(COLORED,    'Style', group=SMART_GROUP, options=[COLORED,MONOCHROME])
+showTrendInput = input(false, 'Color Candles', group=SMART_GROUP)
+
+showInternalsInput            = input(true,  'Show Internal Structure',    group=INTERNAL_GROUP)
+showInternalBullInput         = input.string(ALL, 'Bullish Structure',     group=INTERNAL_GROUP, inline='ibull', options=[ALL,BOS,CHOCH])
+internalBullColorInput        = input(GREEN, '',                           group=INTERNAL_GROUP, inline='ibull')
+showInternalBearInput         = input.string(ALL, 'Bearish Structure',     group=INTERNAL_GROUP, inline='ibear', options=[ALL,BOS,CHOCH])
+internalBearColorInput        = input(RED,   '',                           group=INTERNAL_GROUP, inline='ibear')
+internalFilterConfluenceInput = input(false, 'Confluence Filter',          group=INTERNAL_GROUP)
+internalStructureSize         = input.string(TINY, 'Internal Label Size',  group=INTERNAL_GROUP, options=[TINY,SMALL,NORMAL])
+
+showStructureInput    = input(true,  'Show Swing Structure',    group=SWING_GROUP)
+showSwingBullInput    = input.string(ALL, 'Bullish Structure',  group=SWING_GROUP, inline='bull', options=[ALL,BOS,CHOCH])
+swingBullColorInput   = input(GREEN, '',                        group=SWING_GROUP, inline='bull')
+showSwingBearInput    = input.string(ALL, 'Bearish Structure',  group=SWING_GROUP, inline='bear', options=[ALL,BOS,CHOCH])
+swingBearColorInput   = input(RED,   '',                        group=SWING_GROUP, inline='bear')
+swingStructureSize    = input.string(SMALL, 'Swing Label Size', group=SWING_GROUP, options=[TINY,SMALL,NORMAL])
+showSwingsInput       = input(false, 'Show Swing Points',       group=SWING_GROUP, inline='swings')
+swingsLengthInput     = input.int(50, '',                       group=SWING_GROUP, minval=10, inline='swings')
+showHighLowSwingsInput = input(true, 'Show Strong/Weak High/Low', group=SWING_GROUP)
+
+showInternalOrderBlocksInput  = input(true,  'Internal Order Blocks', group=BLOCKS_GROUP, inline='iob')
+internalOrderBlocksSizeInput  = input.int(5, '',                      group=BLOCKS_GROUP, minval=1, maxval=20, inline='iob')
+showSwingOrderBlocksInput     = input(false, 'Swing Order Blocks',    group=BLOCKS_GROUP, inline='ob')
+swingOrderBlocksSizeInput     = input.int(5, '',                      group=BLOCKS_GROUP, minval=1, maxval=20, inline='ob')
+orderBlockFilterInput         = input.string('Atr', 'OB Filter',      group=BLOCKS_GROUP, options=[ATR,RANGE])
+orderBlockMitigationInput     = input.string(HIGHLOW, 'OB Mitigation',group=BLOCKS_GROUP, options=[CLOSE,HIGHLOW])
+internalBullishOrderBlockColor = input.color(color.new(#3179f5,80), 'Internal Bull OB', group=BLOCKS_GROUP)
+internalBearishOrderBlockColor = input.color(color.new(#f77c80,80), 'Internal Bear OB', group=BLOCKS_GROUP)
+swingBullishOrderBlockColor    = input.color(color.new(#1848cc,80), 'Bullish OB',       group=BLOCKS_GROUP)
+swingBearishOrderBlockColor    = input.color(color.new(#b22833,80), 'Bearish OB',       group=BLOCKS_GROUP)
+
+showEqualHighsLowsInput      = input(true,  'Equal High/Low',    group=EQUAL_GROUP)
+equalHighsLowsLengthInput    = input.int(3, 'Bars Confirmation', group=EQUAL_GROUP, minval=1)
+equalHighsLowsThresholdInput = input.float(0.1, 'Threshold',     group=EQUAL_GROUP, minval=0, maxval=0.5, step=0.1)
+equalHighsLowsSizeInput      = input.string(TINY, 'Label Size',  group=EQUAL_GROUP, options=[TINY,SMALL,NORMAL])
+
+showFairValueGapsInput       = input(false, 'Fair Value Gaps',   group=GAPS_GROUP)
+fairValueGapsThresholdInput  = input(true,  'Auto Threshold',    group=GAPS_GROUP)
+fairValueGapsTimeframeInput  = input.timeframe('', 'Timeframe',  group=GAPS_GROUP)
+fairValueGapsBullColorInput  = input.color(color.new(#00ff68,70), 'Bullish FVG', group=GAPS_GROUP)
+fairValueGapsBearColorInput  = input.color(color.new(#ff0008,70), 'Bearish FVG', group=GAPS_GROUP)
+fairValueGapsExtendInput     = input.int(1, 'Extend FVG',        group=GAPS_GROUP, minval=0)
+
+showDailyLevelsInput    = input(false,'Daily',   group=LEVELS_GROUP, inline='daily')
+dailyLevelsStyleInput   = input.string(SOLID,'', group=LEVELS_GROUP, inline='daily',   options=[SOLID,DASHED,DOTTED])
+dailyLevelsColorInput   = input(BLUE,'',         group=LEVELS_GROUP, inline='daily')
+showWeeklyLevelsInput   = input(false,'Weekly',  group=LEVELS_GROUP, inline='weekly')
+weeklyLevelsStyleInput  = input.string(SOLID,'', group=LEVELS_GROUP, inline='weekly',  options=[SOLID,DASHED,DOTTED])
+weeklyLevelsColorInput  = input(BLUE,'',         group=LEVELS_GROUP, inline='weekly')
+showMonthlyLevelsInput  = input(false,'Monthly', group=LEVELS_GROUP, inline='monthly')
+monthlyLevelsStyleInput = input.string(SOLID,'', group=LEVELS_GROUP, inline='monthly', options=[SOLID,DASHED,DOTTED])
+monthlyLevelsColorInput = input(BLUE,'',         group=LEVELS_GROUP, inline='monthly')
+
+showPremiumDiscountZonesInput = input(true,  'Premium/Discount Zones', group=ZONES_GROUP)
+premiumZoneColorInput         = input.color(RED,  'Premium Zone',        group=ZONES_GROUP)
+equilibriumZoneColorInput     = input.color(GRAY, 'Equilibrium Zone',    group=ZONES_GROUP)
+discountZoneColorInput        = input.color(GREEN,'Discount Zone',        group=ZONES_GROUP)
+
+lq_length         = input(14, 'Pivot Lookback',                   group=LIQ_GROUP)
+lq_area           = input.string('Wick Extremity', 'Swing Area',
+     options=['Wick Extremity','Full Range'],                      group=LIQ_GROUP)
+lq_intraPrecision = input(false, 'Intrabar Precision', inline='intrabar', group=LIQ_GROUP)
+lq_intrabarTf     = input.timeframe('1', '',           inline='intrabar', group=LIQ_GROUP)
+lq_filterOptions  = input.string('Count', 'Filter By',
+     options=['Count','Volume'], inline='filter',                  group=LIQ_GROUP)
+lq_filterValue    = input.float(0, '', inline='filter',           group=LIQ_GROUP)
+lq_showTop        = input(true,  'Swing High',           inline='top', group=LIQ_GROUP)
+lq_topCss         = input(color.red, '',                 inline='top', group=LIQ_GROUP)
+lq_topAreaCss     = input(color.new(color.red,50),'Area',inline='top', group=LIQ_GROUP)
+lq_showBtm        = input(true,  'Swing Low',            inline='btm', group=LIQ_GROUP)
+lq_btmCss         = input(color.teal, '',                inline='btm', group=LIQ_GROUP)
+lq_btmAreaCss     = input(color.new(color.teal,50),'Area',inline='btm',group=LIQ_GROUP)
+lq_labelSize      = input.string('Tiny', 'Labels Size',
+     options=['Tiny','Small','Normal'],                            group=LIQ_GROUP)
+
+// ===========================================================================
+// TradeSgnl Alert Configuration
+// ===========================================================================
+long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
+long_tp1_message    = input.string("", "Long TP1 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
+long_tp2_message    = input.string("", "Long TP2 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
+long_tp3_message    = input.string("", "Long TP3 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
+long_exit_message   = input.string("LICENSE_ID,{{ticker}},closebuy", "Long Exit Message",   group="TradeSgnl Alert Messages", tooltip="Message sent when SL or Trail Exit triggers.")
+
+short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
+short_tp1_message   = input.string("", "Short TP1 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
+short_tp2_message   = input.string("", "Short TP2 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
+short_tp3_message   = input.string("", "Short TP3 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
+short_exit_message  = input.string("LICENSE_ID,{{ticker}},closesell", "Short Exit Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when SL or Trail Exit triggers.")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 3 — UTILITY FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+_p(float v) =>
+    t = math.abs(v)
+    t >= 10000  ? str.tostring(math.round(v, 2), "#,###.##") :
+     t >= 100   ? str.tostring(math.round(v, 2), "###.##")   :
+     t >= 1     ? str.tostring(math.round(v, 4), "#.####")   :
+                  str.tostring(math.round(v, 5), "#.#####")
+
+_pips(float price_dist) =>
+    float pip_size = syminfo.type == "forex" ?
+         (str.contains(syminfo.ticker,"JPY") ? 0.01 : 0.0001) :
+         syminfo.mintick * 10
+    pip_size > 0 ? math.round(price_dist / pip_size, 1) : math.round(price_dist, 2)
+
+_pip_str(float price_dist) =>
+    p = _pips(math.abs(price_dist))
+    syminfo.type == "forex" ? str.tostring(p,"#.#") + " pips" : str.tostring(p,"#.##") + " pts"
+
+_pad(int v) => v < 10 ? "0" + str.tostring(v) : str.tostring(v)
+
+// Formatting helper to print dynamic numbers without commas (safe for webhooks)
+f_alert_p(float val) =>
+    if na(val)
+        ""
+    else
+        float t = math.abs(val)
+        t >= 100 ? str.tostring(val, "#.##") : t >= 2 ? str.tostring(val, "#.####") : str.tostring(val, "#.#####")
+
+f_format_alert(string template, float vol, float sl, float tp1, float tp2, float tp3, float risk) =>
+    string res = template
+    if res != ""
+        res := str.replace_all(res, "{{vol}}", str.tostring(vol, "#.####"))
+        res := str.replace_all(res, "{{risk}}", str.tostring(risk, "#.##"))
+        res := str.replace_all(res, "{{sl}}", f_alert_p(sl))
+        res := str.replace_all(res, "{{tp1}}", f_alert_p(tp1))
+        res := str.replace_all(res, "{{tp2}}", f_alert_p(tp2))
+        res := str.replace_all(res, "{{tp3}}", f_alert_p(tp3))
+    res
+
+// ── ASSET CONTRACT NOTIONAL ROUTER ───────────────────────────────────────────
+_get_contract_notional() =>
+    float pv = na(syminfo.pointvalue) or syminfo.pointvalue == 0 ? 1.0 : syminfo.pointvalue
+    syminfo.type == "forex"   ? 100000.0 :
+     syminfo.type == "crypto"  ? 1.0       :
+     syminfo.type == "futures" ? pv        :
+     pv
+
+// ── MIN-UNIT REFERENCE RISK ───────────────────────────────────────────────────
+_risk_at_min_lot(float sl_distance) =>
+    float min_unit =
+         syminfo.type == "forex"   ? 0.01 :
+         syminfo.type == "crypto"  ? 0.01 :
+         syminfo.type == "futures" ? 1.0  :
+         1.0
+    float notional = _get_contract_notional()
+    math.round(sl_distance * min_unit * notional, 2)
+
+// ── VARIABLE POSITION SIZE ────────────────────────────────────────────────────
+_get_position_size(float sl_distance) =>
+    float notional = _get_contract_notional()
+    notional > 0 ? math.round(risk_per_trade / (sl_distance * notional), 4) : 0.0
+
+// ── SIZE DISPLAY STRING ───────────────────────────────────────────────────────
+_size_display(float sz) =>
+    syminfo.type == "forex"   ? str.tostring(sz, "#.#### Lots")   :
+     syminfo.type == "crypto"  ? str.tostring(sz, "#.#### Coins")  :
+     syminfo.type == "futures" ? str.tostring(sz, "#.## Contracts"):
+                                 str.tostring(sz, "#.#### Units")
+
+// ── [NEW v7.0] LIVE DOLLAR P&L FOR VARIABLE POSITION ─────────────────────────
+// Computes unrealised P&L for the currently locked position size.
+// P&L = price_diff × position_size_units × contract_notional_per_unit
+// Fully asset-routed — works correctly for forex lots, crypto coins, futures.
+_live_pnl(float entry, float current_price, int direction, float pos_size) =>
+    float diff     = direction == 1 ? current_price - entry : entry - current_price
+    float notional = _get_contract_notional()
+    math.round(diff * pos_size * notional, 2)
+
+_pnl_str(float pnl) =>
+    pnl >= 0 ? "+$" + str.tostring(pnl, "#.##") : "-$" + str.tostring(math.abs(pnl), "#.##")
+
+_pf_tag(float pf) =>
+    pf == 0.0 ? "NO DATA" : pf >= 2.5 ? "ELITE ✅" : pf >= 2.0 ? "STRONG ✅" :
+     pf >= 1.5 ? "GOOD" : pf >= 1.0 ? "MARGINAL ⚠️" : "NEGATIVE ❌"
+
+// ── CLAW TRAIL FUNCTION ───────────────────────────────────────────────────────
+// Ratcheting ATR trail around EMA. Direction is truth, not trigger.
+// var inside function: each request.security() context gets isolated state.
+calcLiqTrail(mlen, alen, amult) =>
+    float t_atr   = ta.atr(alen)
+    float t_ma    = ta.ema(close, mlen)
+    float raw_up  = t_ma - t_atr * amult
+    float raw_dn  = t_ma + t_atr * amult
+    var int   t_trend = 1
+    var float t_trail = na
+    if barstate.isfirst
+        t_trend := close > t_ma ? 1 : -1
+        t_trail := close > t_ma ? raw_up : raw_dn
+    else
+        int   prev_trend = nz(t_trend[1], 1)
+        float prev_trail = nz(t_trail[1], close)
+        if prev_trend == 1
+            t_trail := math.max(raw_up, prev_trail)
+            t_trend := close < t_trail ? -1 : 1
+            if close < t_trail
+                t_trail := raw_dn
+        else
+            t_trail := math.min(raw_dn, prev_trail)
+            t_trend := close > t_trail ? 1 : -1
+            if close > t_trail
+                t_trail := raw_up
+    [t_trend, t_trail]
+
+f_format_modify(string template, string ticker, float be_price, float trail_start, float trail_step) =>
+    string res = template
+    if res != ""
+        res := str.replace_all(res, "{{ticker}}",      ticker)
+        res := str.replace_all(res, "{{be_price}}",    f_alert_p(be_price))
+        res := str.replace_all(res, "{{trail_start}}", f_alert_p(trail_start))
+        res := str.replace_all(res, "{{trail_step}}",  f_alert_p(trail_step))
+    res
+
+_SEP  = "━━━━━━━━━━━━━━━━━━━━━"
+_SEP2 = "─────────────────────"
+
+_tg_json(string chat_id, string msg) =>
+    string s = str.replace_all(msg, "\\", "\\\\")
+    s       := str.replace_all(s, "\"", "'")
+    s       := str.replace_all(s, "\n", "\\n")
+    s       := str.replace_all(s, "\t", " ")
+    "{\"chat_id\":\"" + chat_id + "\",\"text\":\"" + s + "\"}"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 4 — VOLUME PROFILE ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+var int   vp_zoneStart  = 0
+int       vp_lookback   = bar_index - vp_zoneStart
+var bool  vp_activeZone = false
+var float vp_currentVAL = na
+var float vp_currentVAH = na
+
+var vp_vpGreen    = array.new_float(vpResolution, 0)
+var vp_vpRed      = array.new_float(vpResolution, 0)
+var vp_zoneBounds = array.new_float(vpResolution, 0)
+
+var float[] vp_ltfOpen   = array.new_float(0)
+var float[] vp_ltfClose  = array.new_float(0)
+var float[] vp_ltfHigh   = array.new_float(0)
+var float[] vp_ltfLow    = array.new_float(0)
+var float[] vp_ltfVolume = array.new_float(0)
+
+string userSymbol         = syminfo.prefix + ":" + syminfo.ticker
+string openInterestTicker = str.format("{0}_OI", userSymbol)
+string timeframe_oi       = syminfo.type == "futures" and timeframe.isintraday ? "1D" : timeframe.period
+deltaOi = request.security(openInterestTicker, timeframe_oi, close - close[1], ignore_invalid_symbol=true)
+
+vp_vol() =>
+    out = vpSmoothVol ? ta.ema(volume, 5) : volume
+    if vpVolType == 'Open Interest'
+        out := deltaOi
+    out
+
+[vp_dO, vp_dC, vp_dH, vp_dL, vp_dV] = request.security_lower_tf(syminfo.tickerid, '', [open, close, high, low, vp_vol()])
+
+vp_resetProfile(bool enable) =>
+    if enable
+        array.fill(vp_vpGreen, 0)
+        array.fill(vp_vpRed,   0)
+        array.clear(vp_ltfOpen)
+        array.clear(vp_ltfHigh)
+        array.clear(vp_ltfLow)
+        array.clear(vp_ltfClose)
+        array.clear(vp_ltfVolume)
+
+vp_profHigh = ta.highest(high, vp_lookback + 1)[1]
+vp_profLow  = ta.lowest(low,   vp_lookback + 1)[1]
+
+vp_get_vol(float y11, float y12, float y21, float y22, float height, float vol) =>
+    nz(math.max(math.min(math.max(y11,y12), math.max(y21,y22)) - math.max(math.min(y11,y12), math.min(y21,y22)), 0) * vol / height)
+
+vp_profileAdd(float o, float h, float l, float c, float v, float g, float w) =>
+    for i = 0 to array.size(vp_vpGreen) - 1
+        zoneTop      = array.get(vp_zoneBounds, i)
+        zoneBot      = zoneTop - g
+        body_top     = math.max(c, o)
+        body_bot     = math.min(c, o)
+        itsgreen     = c >= o
+        topwick      = h - body_top
+        bottomwick   = body_bot - l
+        body         = body_top - body_bot
+        totalWeight  = 2 * topwick + 2 * bottomwick + body
+        if totalWeight <= 0
+            continue
+        bodyvol       = body       * v / totalWeight
+        topwickvol    = 2 * topwick    * v / totalWeight
+        bottomwickvol = 2 * bottomwick * v / totalWeight
+        if vpVolType == 'Volume'
+            array.set(vp_vpGreen, i, array.get(vp_vpGreen, i) + (itsgreen ? vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, bodyvol) : 0) + vp_get_vol(zoneBot, zoneTop, body_top, h, topwick, topwickvol) / 2 + vp_get_vol(zoneBot, zoneTop, body_bot, l, bottomwick, bottomwickvol) / 2)
+            array.set(vp_vpRed,   i, array.get(vp_vpRed,   i) + (itsgreen ? 0 : vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, bodyvol)) + vp_get_vol(zoneBot, zoneTop, body_top, h, topwick, topwickvol) / 2 + vp_get_vol(zoneBot, zoneTop, body_bot, l, bottomwick, bottomwickvol) / 2)
+        else if vpVolType == 'Open Interest'
+            absV = math.abs(v)
+            if v > 0
+                array.set(vp_vpGreen, i, array.get(vp_vpGreen, i) + vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, absV))
+            else if v < 0
+                array.set(vp_vpRed,   i, array.get(vp_vpRed,   i) + vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, absV))
+
+vp_calcSession(bool update) =>
+    array.fill(vp_vpGreen, 0)
+    array.fill(vp_vpRed,   0)
+    if bar_index > vp_lookback and update and (vp_profHigh - vp_profLow) > 0
+        gap = (vp_profHigh - vp_profLow) / vpResolution
+        for i = 0 to vpResolution - 1
+            array.set(vp_zoneBounds, i, vp_profHigh - gap * i)
+        if array.size(vp_ltfOpen) > 0
+            for j = 0 to array.size(vp_ltfOpen) - 1
+                vp_profileAdd(array.get(vp_ltfOpen, j), array.get(vp_ltfHigh, j), array.get(vp_ltfLow, j), array.get(vp_ltfClose, j), array.get(vp_ltfVolume, j), gap, 1)
+
+vp_pocLevel() =>
+    float maxVol = 0
+    int levelInd = 0
+    for i = 0 to array.size(vp_vpRed) - 1
+        if array.get(vp_vpRed, i) + array.get(vp_vpGreen, i) > maxVol
+            maxVol   := array.get(vp_vpRed, i) + array.get(vp_vpGreen, i)
+            levelInd := i
+    float outLevel = na
+    if levelInd != array.size(vp_vpRed) - 1
+        outLevel := array.get(vp_zoneBounds, levelInd) - (array.get(vp_zoneBounds, levelInd) - array.get(vp_zoneBounds, levelInd + 1)) / 2
+    outLevel
+
+vp_valueLevels(float poc) =>
+    float gap    = (vp_profHigh - vp_profLow) / vpResolution
+    float volSum = array.sum(vp_vpRed) + array.sum(vp_vpGreen)
+    float volCnt = 0
+    float vah    = vp_profHigh
+    float val    = vp_profLow
+    int   pocInd = 0
+    for i = 0 to array.size(vp_zoneBounds) - 2
+        if array.get(vp_zoneBounds, i) >= poc and array.get(vp_zoneBounds, i + 1) < poc
+            pocInd := i
+    volCnt += (array.get(vp_vpRed, pocInd) + array.get(vp_vpGreen, pocInd))
+    for i = 1 to array.size(vp_vpRed)
+        if pocInd + i >= 0 and pocInd + i < array.size(vp_vpRed)
+            volCnt += (array.get(vp_vpRed, pocInd + i) + array.get(vp_vpGreen, pocInd + i))
+            if volCnt >= volSum * (vpVAwidth / 100)
+                break
+            else
+                val := array.get(vp_zoneBounds, pocInd + i) - gap
+        if pocInd - i >= 0 and pocInd - i < array.size(vp_vpRed)
+            volCnt += (array.get(vp_vpRed, pocInd - i) + array.get(vp_vpGreen, pocInd - i))
+            if volCnt >= volSum * (vpVAwidth / 100)
+                break
+            else
+                vah := array.get(vp_zoneBounds, pocInd - i)
+    result = array.new<float>(2)
+    array.set(result, 0, val)
+    array.set(result, 1, vah)
+    result
+
+vp_drawNewZone(bool update) =>
+    if bar_index > vp_lookback and update and array.sum(vp_vpGreen) + array.sum(vp_vpRed) > 0 and vpEnabled
+        gap           = (vp_profHigh - vp_profLow) / vpResolution
+        float leftMax = bar_index[vp_lookback]
+        float rightMax= bar_index[int(vp_lookback / 1.4)]
+        float rightMaxVol = array.max(vp_vpGreen) + array.max(vp_vpRed)
+        float buffer  = gap / 10
+        if vpShowLabels
+            label.new((bar_index - 1 + int(leftMax)) / 2, vp_profHigh, vpSessionType, color=color.rgb(0,0,0,100), textcolor=chart.fg_color)
+        if vpShowProfile
+            for i = 0 to array.size(vp_vpRed) - 1
+                greenEnd = int(leftMax + (rightMax - leftMax) * (array.get(vp_vpGreen, i) / rightMaxVol))
+                redEnd   = int(greenEnd + (rightMax - leftMax) * (array.get(vp_vpRed,   i) / rightMaxVol))
+                if vpDisplayMode == 'Mode 2'
+                    box.new(int(leftMax), array.get(vp_zoneBounds, i) - buffer, greenEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                    box.new(greenEnd,     array.get(vp_zoneBounds, i) - buffer, redEnd,   array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBearCol, border_width=0)
+                else if vpDisplayMode == 'Mode 1'
+                    box.new(int(leftMax), array.get(vp_zoneBounds, i) - buffer, greenEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                else
+                    box.new(int(leftMax),                      array.get(vp_zoneBounds, i) - buffer, greenEnd,     array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                    box.new(int(leftMax) - redEnd + greenEnd,  array.get(vp_zoneBounds, i) - buffer, int(leftMax), array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBearCol, border_width=0)
+        poc      = vp_pocLevel()
+        vaLevels = vp_valueLevels(poc)
+        val      = array.get(vaLevels, 0)
+        vah      = array.get(vaLevels, 1)
+        if vpShowPOC
+            line.new(int(leftMax), poc, bar_index - 1, poc, color=vpPOCcolor, width=vpPOCwidth)
+        if vpShowVA
+            line.new(int(leftMax), vah, bar_index - 1, vah, color=vpVAHcolor, width=vpVAHwidth)
+            line.new(int(leftMax), val, bar_index - 1, val, color=vpVALcolor, width=vpVALwidth)
+        if vpShowVAbox
+            box.new(int(leftMax), vah, bar_index - 1, val, border_color=color.rgb(54,58,69,100), bgcolor=vpVAboxCol)
+
+vp_updateIntra(array<float> o, array<float> h, array<float> l, array<float> c, array<float> v) =>
+    if array.size(o) > 0
+        for i = 0 to array.size(o) - 1
+            array.push(vp_ltfOpen,   array.get(o, i))
+            array.push(vp_ltfHigh,   array.get(h, i))
+            array.push(vp_ltfLow,    array.get(l, i))
+            array.push(vp_ltfClose,  array.get(c, i))
+            array.push(vp_ltfVolume, array.get(v, i))
+
+vp_utcHour      = hour(time(timeframe.period, '0000-2400', 'GMT'), 'GMT')
+vp_localHour    = (vp_utcHour + tz_offset_hours) % 24
+vp_newTokyo     = vp_utcHour != vp_utcHour[1] + 1 and vp_utcHour != vp_utcHour[1]
+vp_endTokyo     = vp_utcHour >= 9  and vp_utcHour[1] < 9
+vp_newLondon    = vp_utcHour >= 7  and vp_utcHour[1] < 7
+vp_endLondon    = vp_utcHour >= 16 and vp_utcHour[1] < 16
+vp_newNewYork   = vp_utcHour >= 13 and vp_utcHour[1] < 13
+vp_endNewYork   = vp_utcHour >= 22 and vp_utcHour[1] < 22
+vp_newDaily     = dayofweek  != dayofweek[1]
+vp_newWeekly    = weekofyear != weekofyear[1]
+vp_newMonthly   = (dayofmonth != dayofmonth[1] + 1) and (dayofmonth != dayofmonth[1])
+vp_newYearly    = year != year[1]
+vp_newQuarterly = month != month[1] and (month - 1) % 3 == 0
+
+vp_newSession = switch vpSessionType
+    'Tokyo'     => vp_newTokyo
+    'London'    => vp_newLondon
+    'New York'  => vp_newNewYork
+    'Daily'     => vp_newDaily
+    'Weekly'    => vp_newWeekly
+    'Monthly'   => vp_newMonthly
+    'Yearly'    => vp_newYearly
+    'Quarterly' => vp_newQuarterly
+    => vp_newDaily
+
+vp_zoneEnd = switch vpSessionType
+    'Tokyo'     => vp_endTokyo
+    'London'    => vp_endLondon
+    'New York'  => vp_endNewYork
+    'Daily'     => vp_newDaily
+    'Weekly'    => vp_newWeekly
+    'Monthly'   => vp_newMonthly
+    'Yearly'    => vp_newYearly
+    'Quarterly' => vp_newQuarterly
+    => vp_newDaily
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 5 — ADAPTIVE VWAP ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+b     = bar_index
+var float ph  = na
+var float pl  = na
+var int phL   = b
+var int plL   = b
+var int lastSwing = 0
+
+var array<label> vwap_swing_labels = array.new<label>()
+int VWAP_LABEL_CAP = 200
+
+ph  := ta.highestbars(high, prd) == 0 ? high : ph
+pl  := ta.lowestbars(low,   prd) == 0 ? low  : pl
+phL := ta.highestbars(high, prd) == 0 ? b    : phL
+plL := ta.lowestbars(low,   prd) == 0 ? b    : plL
+
+dir_vwap    = phL > plL ? 1 : -1
+atrLen_vwap = 200
+atr_vwap    = ta.atr(atrLen_vwap)
+atrAvg      = ta.rma(atr_vwap, atrLen_vwap)
+ratio_vwap  = atrAvg > 0 ? atr_vwap / atrAvg : 1.0
+aptRaw      = useAdapt ? baseAPT / math.pow(ratio_vwap, volBias_vwap) : baseAPT
+aptClamped  = math.max(5.0, math.min(300.0, aptRaw))
+aptSeries   = math.round(aptClamped)
+
+alphaFromAPT(apt) =>
+    decay = math.exp(-math.log(2.0) / math.max(1.0, apt))
+    1.0 - decay
+
+var float p_vwap      = hlc3 * volume
+var float vol_vwap    = volume
+var float vap_current = na
+
+type dataPoints
+    array<chart.point> points
+    polyline poly = na
+
+var vwap_data = dataPoints.new(array.new<chart.point>())
+
+if dir_vwap != dir_vwap[1]
+    x_vwap   = dir_vwap > 0 ? plL  : phL
+    y_vwap   = dir_vwap > 0 ? pl   : ph
+    col_vwap = dir_vwap > 0 ? color.green : color.red
+    txt_vwap = dir_vwap > 0 ? "BULL" : "BEAR"
+    new_lbl  = label.new(x_vwap, y_vwap, text=txt_vwap, style=dir_vwap>0?label.style_label_up:label.style_label_down, color=color.new(col_vwap, 0), textcolor=color.white, size=size.small)
+    array.push(vwap_swing_labels, new_lbl)
+    if array.size(vwap_swing_labels) > VWAP_LABEL_CAP
+        label.delete(array.shift(vwap_swing_labels))
+    lastSwing  := dir_vwap > 0 ? +1 : -1
+    barsback    = b - x_vwap
+    p_vwap     := y_vwap * volume[barsback]
+    vol_vwap   := volume[barsback]
+    vwap_data.poly.delete()
+    polyline.new(vwap_data.points, false, false, line_color=dir_vwap < 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+    vwap_data.points.clear()
+    for i = barsback to 0 by 1
+        apt_i    = aptSeries[i]
+        alpha    = alphaFromAPT(apt_i)
+        pxv      = hlc3[i] * volume[i]
+        v_i      = volume[i]
+        p_vwap  := (1.0 - alpha) * p_vwap  + alpha * pxv
+        vol_vwap := (1.0 - alpha) * vol_vwap + alpha * v_i
+        vappe    = vol_vwap > 0 ? p_vwap / vol_vwap : na
+        vwap_data.points.push(chart.point.from_index(b - i, vappe))
+    vwap_data.poly := polyline.new(vwap_data.points, false, false, line_color=dir_vwap < 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+else
+    apt_0    = aptSeries
+    alpha    = alphaFromAPT(apt_0)
+    pxv      = hlc3 * volume
+    v0       = volume
+    p_vwap  := (1.0 - alpha) * p_vwap  + alpha * pxv
+    vol_vwap := (1.0 - alpha) * vol_vwap + alpha * v0
+    vap      = vol_vwap > 0 ? p_vwap / vol_vwap : na
+    vwap_data.poly.delete()
+    vwap_data.points.push(chart.point.from_index(b, vap))
+    vwap_data.poly := polyline.new(vwap_data.points, false, false, line_color=dir_vwap > 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+
+vap_current := vol_vwap > 0 ? p_vwap / vol_vwap : na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 6 — RSI MOMENTUM STATE ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+rsi         = ta.rsi(close, rsiLen)
+ema5_close  = ta.ema(close, 5)
+ema5_high   = ta.ema(high,  5)
+ema10_low   = ta.ema(low,  10)
+change_ema5 = ta.change(ema5_close)
+
+var bool positive = false
+var bool negative = false
+
+p_mom = rsi[1] < pmom and rsi > pmom and rsi > nmom and change_ema5 > 0
+n_mom = rsi < nmom and change_ema5 < 0
+
+if p_mom
+    positive := true
+    negative := false
+if n_mom
+    positive := false
+    negative := true
+
+rsi_high_val = filleshow ? ema5_high : float(na)
+rsi_low_val  = filleshow ? ema10_low : float(na)
+a_rsi = plot(rsi_high_val, display=display.none)
+b_rsi = plot(rsi_low_val,  display=display.none)
+fill(a_rsi, b_rsi, color=positive ? color.new(color.green, 62) : color.new(color.red, 66))
+
+pcondition  = positive  and not positive[1]
+ncondition2 = negative  and not negative[1]
+
+plotshape(showRSIlabels and pcondition,  title="RSI+", style=shape.labelup,   color=color.new(color.green, 62), location=location.belowbar, size=size.tiny, text="BULL", textcolor=color.white)
+plotshape(showRSIlabels and ncondition2, title="RSI-", style=shape.labeldown, color=color.new(color.red,   66), location=location.abovebar, size=size.tiny, text="BEAR", textcolor=color.white)
+
+// ── SMART RSI EXTREME SIGNALS ────────────────────────────────────────────────
+float rsi_m5_val  = request.security(syminfo.tickerid,"5", ta.rsi(close,rsiLen), barmerge.gaps_off, barmerge.lookahead_off)
+float ema5_m5     = request.security(syminfo.tickerid,"5", ta.ema(close,5),      barmerge.gaps_off, barmerge.lookahead_off)
+bool  m5_bull_mom = ta.change(ema5_m5) > 0
+bool  m5_bear_mom = ta.change(ema5_m5) < 0
+
+bool smartBull   = enable_smart_signals and rsi >= rsi_extreme_bull and change_ema5 > 0 and (not use_m5_rsi_confirm or (rsi_m5_val > pmom and m5_bull_mom))
+bool smartBear   = enable_smart_signals and rsi <= rsi_extreme_bear and change_ema5 < 0 and (not use_m5_rsi_confirm or (rsi_m5_val < nmom and m5_bear_mom))
+bool newSmartBull = smartBull and not smartBull[1] and barstate.isconfirmed
+bool newSmartBear = smartBear and not smartBear[1] and barstate.isconfirmed
+
+plotshape(enable_smart_signals and newSmartBull, title="Smart Bull", style=shape.labelup,   location=location.belowbar, color=color.new(#00c853,20), textcolor=color.white, size=size.tiny, text="🧠buy")
+plotshape(enable_smart_signals and newSmartBear, title="Smart Bear", style=shape.labeldown, location=location.abovebar, color=color.new(#d50000,20), textcolor=color.white, size=size.tiny, text="🧠sell")
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 6.5 — CLAW MULTI-TIMEFRAME LIQUIDITY TRAIL
+// Direction truth from ratcheting ATR trail. Each TF runs in its own context.
+// M5=execution precision | M15=tactical | H1=intraday regime
+// ══════════════════════════════════════════════════════════════════════════════
+[claw_exec_trend, claw_exec_trail] = calcLiqTrail(claw_ma_len, claw_atr_len, claw_atr_mult)
+[claw_m5_trend,   claw_m5_trail]   = request.security(syminfo.tickerid,"5",  calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+[claw_m15_trend,  claw_m15_trail]  = request.security(syminfo.tickerid,"15", calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+[claw_h1_trend,   claw_h1_trail]   = request.security(syminfo.tickerid,"60", calcLiqTrail(claw_ma_len,claw_atr_len,claw_atr_mult), barmerge.gaps_off, barmerge.lookahead_off)
+
+bool claw_mtf_bull     = claw_m15_trend == 1  and claw_h1_trend == 1
+bool claw_mtf_bear     = claw_m15_trend == -1 and claw_h1_trend == -1
+bool claw_partial_bull = claw_m15_trend == 1  or claw_h1_trend == 1
+bool claw_partial_bear = claw_m15_trend == -1 or claw_h1_trend == -1
+bool claw_exec_bull    = claw_exec_trend == 1
+bool claw_exec_bear    = claw_exec_trend == -1
+
+string claw_dir_str = claw_mtf_bull ? "🟢 MTF BULL" : claw_mtf_bear ? "🔴 MTF BEAR" : claw_partial_bull ? "🟡 PARTIAL BULL" : claw_partial_bear ? "🟠 PARTIAL BEAR" : "⚪ MIXED"
+
+plot(showClawTrail ? claw_exec_trail : float(na), "Claw Exec Trail", color=claw_exec_bull ? color.new(color.lime,20) : color.new(color.red,20), linewidth=2)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 7 — ATM BOT (ATR TRAILING STOP ENGINE)
+// ══════════════════════════════════════════════════════════════════════════════
+buyEnabled  = (c_buy  > 0) and (a_buy  > 0)
+sellEnabled = (c_sell > 0) and (a_sell > 0)
+
+src_buy    = close
+ema_buy    = ta.ema(src_buy, 1)
+atr_buy    = buyEnabled  ? ta.atr(c_buy)  : na
+nLoss_buy  = buyEnabled  ? a_buy  * atr_buy  : na
+var float trail_buy = na
+
+if buyEnabled
+    if na(trail_buy[1])
+        trail_buy := src_buy - nLoss_buy
+    else
+        if src_buy > trail_buy[1] and src_buy[1] > trail_buy[1]
+            trail_buy := math.max(trail_buy[1], src_buy - nLoss_buy)
+        else if src_buy < trail_buy[1] and src_buy[1] < trail_buy[1]
+            trail_buy := math.min(trail_buy[1], src_buy + nLoss_buy)
+        else
+            trail_buy := src_buy > trail_buy[1] ? src_buy - nLoss_buy : src_buy + nLoss_buy
+else
+    trail_buy := na
+
+src_sell   = close
+ema_sell   = ta.ema(src_sell, 1)
+atr_sell   = sellEnabled ? ta.atr(c_sell) : na
+nLoss_sell = sellEnabled ? a_sell * atr_sell : na
+var float trail_sell = na
+
+if sellEnabled
+    if na(trail_sell[1])
+        trail_sell := src_sell + nLoss_sell
+    else
+        if src_sell > trail_sell[1] and src_sell[1] > trail_sell[1]
+            trail_sell := math.max(trail_sell[1], src_sell - nLoss_sell)
+        else if src_sell < trail_sell[1] and src_sell[1] < trail_sell[1]
+            trail_sell := math.min(trail_sell[1], src_sell + nLoss_sell)
+        else
+            trail_sell := src_sell > trail_sell[1] ? src_sell - nLoss_sell : src_sell + nLoss_sell
+else
+    trail_sell := na
+
+above_buy_cross  = ta.crossover(ema_buy,   trail_buy)
+below_sell_cross = ta.crossover(trail_sell, ema_sell)
+
+above_buy       = buyEnabled  and above_buy_cross
+buy_signal_raw  = buyEnabled  and (src_buy  > trail_buy)  and above_buy
+buy_signal      = buy_signal_raw and barstate.isconfirmed
+
+below_sell      = sellEnabled and below_sell_cross
+sell_signal_raw = sellEnabled and (src_sell < trail_sell) and below_sell
+sell_signal     = sell_signal_raw and barstate.isconfirmed
+
+bullishRegime = positive
+bearishRegime = negative
+vwapBullish   = lastSwing ==  1
+vwapBearish   = lastSwing == -1
+
+// ── Fib Trend pre-computation for regime gate (plots stay in Section 12) ─────
+// Must be here — trend_fib is needed by regimeBullish below; Section 12 is later.
+_fib_basis_gate = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+var int trend_fib = 0
+trend_fib := _fib_basis_gate > _fib_basis_gate[1] ? 1 : _fib_basis_gate < _fib_basis_gate[1] ? -1 : nz(trend_fib[1])
+
+// Sequential single-line ternaries — Pine v6 handles these cleanly.
+// Fib and VWAP are layered filters, NOT a combined hard gate, matching The Claw's architecture.
+regimeBullish = requireVWAP ? (bullishRegime and vwapBullish) : bullishRegime
+regimeBullish := requireFibTrend ? (regimeBullish and trend_fib == 1) : regimeBullish
+regimeBearish = requireVWAP ? (bearishRegime and vwapBearish) : bearishRegime
+regimeBearish := requireFibTrend ? (regimeBearish and trend_fib == -1) : regimeBearish
+
+buy_signal_filtered  = enableRegimeFilter ? (buy_signal  and regimeBullish) : buy_signal
+sell_signal_filtered = enableRegimeFilter ? (sell_signal and regimeBearish) : sell_signal
+
+var int posState = 0
+var bool is_trade_running = false
+
+if buyEnabled  and buy_signal_filtered
+    if not (prevent_reversals and is_trade_running and posState == -1)
+        posState := 1
+else if sellEnabled and sell_signal_filtered
+    if not (prevent_reversals and is_trade_running and posState == 1)
+        posState := -1
+
+buy_signal_confirmed  = (buyEnabled  and buy_signal_filtered  and posState == 1  and posState[1] <= 0) or
+     (newSmartBull and claw_exec_bull and regimeBullish and posState <= 0)
+sell_signal_confirmed = (sellEnabled and sell_signal_filtered and posState == -1 and posState[1] >= 0) or
+     (newSmartBear and claw_exec_bear and regimeBearish and posState >= 0)
+
+buy_sig_vis   = buyEnabled  and buy_signal_filtered
+sell_sig_vis  = sellEnabled and sell_signal_filtered
+buy_rejected  = enableRegimeFilter and buy_signal_raw  and not regimeBullish
+sell_rejected = enableRegimeFilter and sell_signal_raw and not regimeBearish
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 8 — FRACTAL 4-LAYER STATE MACHINE
+// ══════════════════════════════════════════════════════════════════════════════
+sovereign_state = request.security(syminfo.tickerid, sovereign_tf, posState, barmerge.gaps_off, barmerge.lookahead_off)
+anchor_state    = request.security(syminfo.tickerid, anchor_tf,    posState, barmerge.gaps_off, barmerge.lookahead_off)
+filter_state    = request.security(syminfo.tickerid, filter_tf,    posState, barmerge.gaps_off, barmerge.lookahead_off)
+exec_state      = posState
+
+var string agent_sync_phase = "SOVEREIGN NEUTRAL"
+bool master_sync_buy  = false
+bool master_sync_sell = false
+
+if admin_manual_bias == "SILENCE"
+    agent_sync_phase := "🔇 ADMIN SILENCE — STANDING ASIDE"
+else if admin_manual_bias == "FORCE BULL"
+    agent_sync_phase := "📡 ADMIN OVERRIDE — FORCED BULLISH"
+    if buy_signal_confirmed
+        master_sync_buy := true
+else if admin_manual_bias == "FORCE BEAR"
+    agent_sync_phase := "📡 ADMIN OVERRIDE — FORCED BEARISH"
+    if sell_signal_confirmed
+        master_sync_sell := true
+else
+    if sovereign_state == 1
+        if anchor_state == 1
+            if filter_state == 1
+                if exec_state == 1
+                    agent_sync_phase := "🔥 FULLY ALIGNED: BULLISH (4-LAYER)"
+                    if buy_signal_confirmed
+                        master_sync_buy := true
+                else if exec_state == -1
+                    agent_sync_phase := "L4 PULLBACK — Wait for Exec Bull Flip"
+                else
+                    agent_sync_phase := "L4 NEUTRAL — Exec Waiting"
+            else if filter_state == -1
+                agent_sync_phase := "L3 PULLBACK — Wait for Filter Bull Flip"
+            else
+                agent_sync_phase := "L3 NEUTRAL — Navigator Flat"
+        else if anchor_state == -1
+            agent_sync_phase := "L2 PULLBACK — Wait for Anchor Bull Flip"
+        else
+            agent_sync_phase := "L2 NEUTRAL — Commander Flat"
+    else if sovereign_state == -1
+        if anchor_state == -1
+            if filter_state == -1
+                if exec_state == -1
+                    agent_sync_phase := "🥶 FULLY ALIGNED: BEARISH (4-LAYER)"
+                    if sell_signal_confirmed
+                        master_sync_sell := true
+                else if exec_state == 1
+                    agent_sync_phase := "L4 PULLBACK — Wait for Exec Bear Flip"
+                else
+                    agent_sync_phase := "L4 NEUTRAL — Exec Waiting"
+            else if filter_state == 1
+                agent_sync_phase := "L3 PULLBACK — Wait for Filter Bear Flip"
+            else
+                agent_sync_phase := "L3 NEUTRAL — Navigator Flat"
+        else if anchor_state == 1
+            agent_sync_phase := "L2 PULLBACK — Wait for Anchor Bear Flip"
+        else
+            agent_sync_phase := "L2 NEUTRAL — Commander Flat"
+    else
+        agent_sync_phase := "SOVEREIGN NEUTRAL — STANDING ASIDE"
+
+bool sovereign_counter_buy  = buy_signal_confirmed  and sovereign_state == -1
+bool sovereign_counter_sell = sell_signal_confirmed and sovereign_state ==  1
+bool silence_mode           = admin_manual_bias == "SILENCE"
+string sovereignStatus      = sovereign_state == 1 ? "BULL" : sovereign_state == -1 ? "BEAR" : "NEUT"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 9 — SIGNAL VISUALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+plotshape(master_sync_buy,  title="Master Sync Buy",  style=shape.diamond, location=location.belowbar, color=color.new(#00ff08,0), textcolor=color.white, size=size.normal, text="SYNC BUY")
+plotshape(master_sync_sell, title="Master Sync Sell", style=shape.diamond, location=location.abovebar, color=color.new(#ff0000,0), textcolor=color.white, size=size.normal, text="SYNC SELL")
+plotshape(buy_sig_vis,   title="ATM Buy",        style=shape.labelup,     location=location.belowbar, color=color.green,           textcolor=color.white, size=size.tiny,   text="Buy")
+plotshape(sell_sig_vis,  title="ATM Sell",       style=shape.labeldown,   location=location.abovebar, color=color.red,             textcolor=color.white, size=size.tiny,   text="Sell")
+plotshape(buy_rejected,  title="Rejected Buy",   style=shape.xcross,      location=location.belowbar, color=color.gray,            size=size.tiny)
+plotshape(sell_rejected, title="Rejected Sell",  style=shape.xcross,      location=location.abovebar, color=color.gray,            size=size.tiny)
+plotshape(sovereign_counter_buy,  title="Counter Long",  style=shape.triangleup,   location=location.belowbar, color=color.new(GOLD,20), textcolor=color.black, size=size.small, text="CT-L")
+plotshape(sovereign_counter_sell, title="Counter Short", style=shape.triangledown, location=location.abovebar, color=color.new(GOLD,20), textcolor=color.black, size=size.small, text="CT-S")
+
+utColor = buy_sig_vis ? color.new(color.green, 75) : sell_sig_vis ? color.new(color.red, 75) : na
+barcolor(utColor)
+
+plot(showTrailBuy  and buyEnabled  ? trail_buy  : float(na), title="Buy Trail",  color=color.new(color.green, 0), linewidth=1)
+plot(showTrailSell and sellEnabled ? trail_sell : float(na), title="Sell Trail", color=color.new(color.red,   0), linewidth=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 10 — LINREG CANDLES & SIGNAL LINE
+// ══════════════════════════════════════════════════════════════════════════════
+_bopen  = lin_reg ? ta.linreg(open,  linreg_length, 0) : open
+_bhigh  = lin_reg ? ta.linreg(high,  linreg_length, 0) : high
+_blow   = lin_reg ? ta.linreg(low,   linreg_length, 0) : low
+_bclose = lin_reg ? ta.linreg(close, linreg_length, 0) : close
+signal  = sma_signal ? ta.sma(_bclose, signal_length) : ta.ema(_bclose, signal_length)
+
+inLong  = posState ==  1
+inShort = posState == -1
+isFlat  = posState ==  0
+dirUp   = _bclose >= _bopen
+
+lrColor = inLong ? color.green : inShort ? color.red : isFlat and dirUp ? color.green : color.red
+plotcandle(_bopen, _bhigh, _blow, _bclose, title="LinReg Candle", color=lrColor, wickcolor=lrColor, bordercolor=lrColor)
+plot(signal, color=color.blue, linewidth=2, title="Signal")
+
+ema21 = ta.ema(close, 21)
+plot(ema21, color=color.new(color.orange, 50), linewidth=2, title="21 EMA")
+bgcolor(enableRegimeFilter ? (regimeBullish ? color.new(color.green, 95) : regimeBearish ? color.new(color.red, 95) : na) : na)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 11 — LONGEVITY ZONES
+// ══════════════════════════════════════════════════════════════════════════════
+type level
+    float top
+    float bot
+    int start
+type drawing
+    line  top
+    line  bot
+    linefill fill
+    label lbl
+
+var upper     = array.new<level>()
+var lower     = array.new<level>()
+var upperDraw = array.new<drawing>()
+var lowerDraw = array.new<drawing>()
+
+h_zone     = ta.highest(len_z)
+l_zone     = ta.lowest(len_z)
+high_pivot = high[1] == h_zone[1] and high < h_zone
+low_pivot  = low[1]  == l_zone[1] and low  > l_zone
+halfATR    = ta.atr(20) * 0.5
+labels_at_root = lab_pos == "LastBar"
+
+if showZones
+    if high_pivot
+        array.push(upper, level.new(h_zone, h_zone - halfATR, bar_index - 1))
+    if low_pivot
+        array.push(lower, level.new(l_zone + halfATR, l_zone, bar_index - 1))
+    if array.size(upper) > 10
+        array.shift(upper)
+    if array.size(lower) > 10
+        array.shift(lower)
+    for i = array.size(upper) - 1 to 0
+        if array.size(upper) == 0
+            break
+        zUp = array.get(upper, i)
+        if high > zUp.top and bar_index > zUp.start
+            array.remove(upper, i)
+    for i = array.size(lower) - 1 to 0
+        if array.size(lower) == 0
+            break
+        zLo = array.get(lower, i)
+        if low < zLo.bot and bar_index > zLo.start
+            array.remove(lower, i)
+
+if barstate.islast and showZones
+    for d in upperDraw
+        line.delete(d.top)
+        line.delete(d.bot)
+        if not na(d.fill)
+            linefill.delete(d.fill)
+        label.delete(d.lbl)
+    array.clear(upperDraw)
+    for d in lowerDraw
+        line.delete(d.top)
+        line.delete(d.bot)
+        if not na(d.fill)
+            linefill.delete(d.fill)
+        label.delete(d.lbl)
+    array.clear(lowerDraw)
+    for z in upper
+        l1  = line.new(z.start, z.top, bar_index, z.top, color=col_upper, width=8)
+        l2  = line.new(z.start, z.bot, bar_index, z.bot, color=col_upper, width=8)
+        f   = linefill.new(l1, l2, color=col_upper)
+        lx  = labels_at_root ? z.start : bar_index + labelOffsetBars
+        ly  = (z.top + z.bot) / 2
+        lbl = label.new(lx, ly, "Supply Zone", style=label.style_label_center, textcolor=color.white, color=color.new(color.black, 0), size=size.tiny)
+        array.push(upperDraw, drawing.new(l1, l2, f, lbl))
+    for z in lower
+        l1  = line.new(z.start, z.top, bar_index, z.top, color=col_lower, width=8)
+        l2  = line.new(z.start, z.bot, bar_index, z.bot, color=col_lower, width=8)
+        f   = linefill.new(l1, l2, color=col_lower)
+        lx  = labels_at_root ? z.start : bar_index + labelOffsetBars
+        ly  = (z.top + z.bot) / 2
+        lbl = label.new(lx, ly, "Demand Zone", style=label.style_label_center, textcolor=color.white, color=color.new(color.black, 0), size=size.tiny)
+        array.push(lowerDraw, drawing.new(l1, l2, f, lbl))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 12 — FIBONACCI EXTENSION BANDS
+// ══════════════════════════════════════════════════════════════════════════════
+basis   = _fib_basis_gate  // reuse pre-computed EMA from regime gate above
+vol_fib = useATR_fib ? ta.atr(atrLen_fib) : ta.stdev(src_fib, len_fib)
+// trend_fib already declared and computed before Section 7
+
+u1_v = trend_fib == -1 ? basis + vol_fib * 0.618 : na
+u4_v = trend_fib == -1 ? basis + vol_fib * 2.618 : na
+l1_v = trend_fib ==  1 ? basis - vol_fib * 0.618 : na
+l4_v = trend_fib ==  1 ? basis - vol_fib * 2.618 : na
+
+u1 = plot(u1_v, color=color.new(color.red,   60), style=plot.style_linebr)
+u4 = plot(u4_v, color=color.new(color.red,   30), style=plot.style_linebr)
+l1 = plot(l1_v, color=color.new(color.green, 60), style=plot.style_linebr)
+l4 = plot(l4_v, color=color.new(color.green, 30), style=plot.style_linebr)
+fill(u1, u4, color=color.new(color.red,   85))
+fill(l1, l4, color=color.new(color.green, 85))
+plot(basis, color=color.gray, linewidth=1)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 13 — VOLUME PROFILE EXECUTION
+// ══════════════════════════════════════════════════════════════════════════════
+if vpEnabled
+    vp_calcSession(vp_zoneEnd or (barstate.islast and vpShowCurrent))
+    float _poc = vp_pocLevel()
+    if not na(_poc)
+        float[] _va = vp_valueLevels(_poc)
+        vp_currentVAL := array.get(_va, 0)
+        vp_currentVAH := array.get(_va, 1)
+    vp_drawNewZone(vp_zoneEnd)
+    vp_resetProfile(vp_newSession)
+    vp_updateIntra(vp_dO, vp_dH, vp_dL, vp_dC, vp_dV)
+    if vp_zoneEnd
+        vp_activeZone := false
+    if vp_newSession
+        vp_zoneStart  := bar_index
+        vp_activeZone := true
+
+vp_currentPOC = vpEnabled ? vp_pocLevel() : na
+vp_vaLevels   = vpEnabled and not na(vp_currentPOC) ? vp_valueLevels(vp_currentPOC) : array.new<float>(2, na)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 14 — PLATINUM RISK MODEL & TRADE SETUP LOCKING
+// ══════════════════════════════════════════════════════════════════════════════
+var float locked_entry         = na
+var float locked_tp1           = na
+var float locked_tp2           = na
+var float locked_tp3           = na
+var float locked_sl            = na
+var float locked_risk_dist     = na
+var float locked_position_size = na
+var float locked_actual_risk   = na
+var int   trade_direction      = 0
+var bool  trade_active         = false
+
+var box  pos_loss_box = na
+var line pos_mid_line = na
+var line pos_tp1_line = na
+var line pos_tp2_line = na
+var line pos_tp3_line = na
+
+risk_swing_l = ta.lowest(low,   5)
+risk_swing_h = ta.highest(high, 5)
+risk_atr     = ta.atr(14)
+
+if buy_signal_confirmed and trade_direction <= 0
+    trade_direction := 1
+    trade_active    := true
+else if sell_signal_confirmed and trade_direction >= 0
+    trade_direction := -1
+    trade_active    := true
+
+if buy_signal_confirmed
+    float sl_val = low > ema21 ? math.max(ema21, risk_swing_l) - (risk_atr * sl_buffer_atr) : risk_swing_l - (risk_atr * sl_buffer_atr)
+    if sl_val >= close
+        sl_val := close - (risk_atr * 1.5)
+    float risk_dist      = close - sl_val
+    locked_entry         := close
+    locked_sl            := sl_val
+    locked_risk_dist     := risk_dist
+    locked_tp1           := close + risk_dist * 1.0
+    locked_tp2           := close + risk_dist * 1.5
+    locked_tp3           := close + risk_dist * 2.0
+    locked_position_size := _get_position_size(risk_dist)
+    locked_actual_risk   := _risk_at_min_lot(risk_dist)
+    box.delete(pos_loss_box)
+    line.delete(pos_mid_line)
+    line.delete(pos_tp1_line)
+    line.delete(pos_tp2_line)
+    line.delete(pos_tp3_line)
+    pos_loss_box := box.new(bar_index, locked_entry, bar_index+5, locked_sl, bgcolor=color.new(color.red,85), border_color=color.new(color.red,50))
+    pos_mid_line := line.new(bar_index, locked_entry, bar_index+5, locked_entry, color=color.gray, style=line.style_dotted)
+    pos_tp1_line := line.new(bar_index, locked_tp1, bar_index+5, locked_tp1, color=color.teal, style=line.style_dashed)
+    pos_tp2_line := line.new(bar_index, locked_tp2, bar_index+5, locked_tp2, color=color.teal, style=line.style_dashed)
+    pos_tp3_line := line.new(bar_index, locked_tp3, bar_index+5, locked_tp3, color=color.teal, style=line.style_solid, width=2)
+
+else if sell_signal_confirmed
+    float sl_val = high < ema21 ? math.min(ema21, risk_swing_h) + (risk_atr * sl_buffer_atr) : risk_swing_h + (risk_atr * sl_buffer_atr)
+    if sl_val <= close
+        sl_val := close + (risk_atr * 1.5)
+    float risk_dist      = sl_val - close
+    locked_entry         := close
+    locked_sl            := sl_val
+    locked_risk_dist     := risk_dist
+    locked_tp1           := close - risk_dist * 1.0
+    locked_tp2           := close - risk_dist * 1.5
+    locked_tp3           := close - risk_dist * 2.0
+    locked_position_size := _get_position_size(risk_dist)
+    locked_actual_risk   := _risk_at_min_lot(risk_dist)
+    box.delete(pos_loss_box)
+    line.delete(pos_mid_line)
+    line.delete(pos_tp1_line)
+    line.delete(pos_tp2_line)
+    line.delete(pos_tp3_line)
+    pos_loss_box := box.new(bar_index, locked_sl, bar_index+5, locked_entry, bgcolor=color.new(color.red,85), border_color=color.new(color.red,50))
+    pos_mid_line := line.new(bar_index, locked_entry, bar_index+5, locked_entry, color=color.gray, style=line.style_dotted)
+    pos_tp1_line := line.new(bar_index, locked_tp1, bar_index+5, locked_tp1, color=color.teal, style=line.style_dashed)
+    pos_tp2_line := line.new(bar_index, locked_tp2, bar_index+5, locked_tp2, color=color.teal, style=line.style_dashed)
+    pos_tp3_line := line.new(bar_index, locked_tp3, bar_index+5, locked_tp3, color=color.teal, style=line.style_solid, width=2)
+
+if trade_active
+    box.set_right( pos_loss_box, bar_index + 5)
+    line.set_x2(   pos_mid_line, bar_index + 5)
+    line.set_x2(   pos_tp1_line, bar_index + 5)
+    line.set_x2(   pos_tp2_line, bar_index + 5)
+    line.set_x2(   pos_tp3_line, bar_index + 5)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 15 — TRADE ID ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+var int    atm_daily_counter = 0
+var int    atm_last_day      = 0
+var string atm_trade_id      = "NONE"
+
+if dayofmonth != atm_last_day
+    atm_daily_counter := 0
+    atm_last_day      := dayofmonth
+
+if buy_signal_confirmed or sell_signal_confirmed
+    atm_daily_counter := atm_daily_counter + 1
+    string _dir_id    = buy_signal_confirmed ? "BUY" : "SELL"
+    atm_trade_id      := "ATM-" + str.tostring(year) + _pad(month) + _pad(dayofmonth) + "-" + _pad(hour) + _pad(minute) + "-" + _dir_id + "-" + _pad(atm_daily_counter)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 15.5 — [NEW v7.0] PDH/PDL CONTEXT ENGINE
+// Fetches the previous day's high and low (lookahead=off, no repainting).
+// Produces a plain-English status string used in the dashboard and broadcast.
+// ══════════════════════════════════════════════════════════════════════════════
+[pdh_level, pdl_level] = request.security(syminfo.tickerid, "D",
+     [high[1], low[1]], barmerge.gaps_off, barmerge.lookahead_off)
+
+string pdh_pdl_status =
+     close > pdh_level and not na(pdh_level) ? "🔼 Above PDH (" + _p(pdh_level) + ")" :
+     close < pdl_level and not na(pdl_level) ? "🔽 Below PDL (" + _p(pdl_level) + ")" :
+     not na(pdh_level) and not na(pdl_level) ?
+         "↔ Inside Range [PDH: " + _p(pdh_level) + " | PDL: " + _p(pdl_level) + "]" :
+     "PDH/PDL: Calculating..."
+
+// ── forward-declarations needed by Section 16 (full blocks declared in later sections) ──
+var array<int>  dpt_dir        = array.new<int>()
+var array<bool> dpt_tp1_hit    = array.new<bool>()
+var array<bool> dpt_sl_hit     = array.new<bool>()
+var int         dpt_active_idx = -1
+var float       holder_trail_price = na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 16 — TRADE PROGRESSION ENGINE (TP1/TP2/TP3/HOLDER MODE)
+// ══════════════════════════════════════════════════════════════════════════════
+var bool   tp1_hit            = false
+var bool   tp2_hit            = false
+var bool   tp3_hit            = false
+var bool   sl_hit_flag        = false
+var bool   holder_mode_active = false
+var float  max_profit_pips    = 0.0
+var string trade_phase        = "WAITING"
+
+if buy_signal_confirmed or sell_signal_confirmed
+    // ── FIX: close orphaned open trade in dpt when a new signal fires ──
+    if is_trade_running and dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
+        bool _was_t1 = array.get(dpt_tp1_hit, dpt_active_idx)
+        if not _was_t1
+            array.set(dpt_sl_hit, dpt_active_idx, true)  // Mark reversal-close as SL (conservative)
+        dpt_active_idx   := -1
+    tp1_hit            := false
+    tp2_hit            := false
+    tp3_hit            := false
+    sl_hit_flag        := false
+    holder_mode_active := false
+    max_profit_pips    := 0.0
+    trade_phase        := "ENTRY"
+    is_trade_running   := true
+    holder_trail_price := na
+
+if trade_active and not na(locked_tp1)
+    raw_max_diff = trade_direction == 1 ? high - locked_entry : locked_entry - low
+    if raw_max_diff > 0
+        max_profit_pips := math.max(max_profit_pips, _pips(raw_max_diff))
+    if not tp1_hit and not sl_hit_flag
+        if trade_direction == 1 ? high >= locked_tp1 : low <= locked_tp1
+            tp1_hit     := true
+            trade_phase := "TP1_HIT"
+    if tp1_hit and not tp2_hit and not sl_hit_flag
+        if trade_direction == 1 ? high >= locked_tp2 : low <= locked_tp2
+            tp2_hit     := true
+            trade_phase := "TP2_HIT"
+    if tp2_hit and not tp3_hit and not sl_hit_flag
+        if trade_direction == 1 ? high >= locked_tp3 : low <= locked_tp3
+            tp3_hit            := true
+            holder_mode_active := true
+            trade_phase        := "TP3_HIT"
+    if holder_mode_active and trade_phase != "TP3_HIT"
+        trade_phase := "HOLDER_MODE"
+    if not tp1_hit and not sl_hit_flag
+        if trade_direction == 1 ? low <= locked_sl : high >= locked_sl
+            sl_hit_flag := true
+            trade_phase := "SL_HIT"
+
+// ── Trail Logic ──
+// holder_trail_price declared before Section 16 (forward-ref fix)
+if holder_mode_active
+    if trade_direction == 1
+        float pivot_l = ta.lowest(low, 5)
+        holder_trail_price := na(holder_trail_price) ? pivot_l : math.max(holder_trail_price, pivot_l)
+    else if trade_direction == -1
+        float pivot_h = ta.highest(high, 5)
+        holder_trail_price := na(holder_trail_price) ? pivot_h : math.min(holder_trail_price, pivot_h)
+else
+    holder_trail_price := na
+
+float active_trail = holder_trail_type == "VWAP" ? vap_current : holder_trail_price
+
+string trade_phase_display = switch trade_phase
+    "WAITING"     => "⚪ SCANNING..."
+    "ENTRY"       => "🟡 ENTRY ACTIVE"
+    "TP1_HIT"     => "🎯 TP1 SECURED"
+    "TP2_HIT"     => "🎯🎯 TP2 — MOVE TO BE"
+    "TP3_HIT"     => "🚀 TP3 HIT — HOLDER MODE"
+    "HOLDER_MODE" => "🔱 " + holder_trail_type + " Trail: " + _p(active_trail)
+    "SL_HIT"      => "💀 STOP HIT"
+    => "⚪ —"
+
+bool tp1_alert_event    = tp1_hit  and not tp1_hit[1]  and barstate.isconfirmed
+bool tp2_alert_event    = tp2_hit  and not tp2_hit[1]  and barstate.isconfirmed
+bool tp3_alert_event    = tp3_hit  and not tp3_hit[1]  and barstate.isconfirmed
+bool sl_alert_event     = sl_hit_flag and not sl_hit_flag[1] and barstate.isconfirmed
+bool holder_exit_long   = holder_mode_active and trade_direction ==  1 and ta.crossunder(close, active_trail) and barstate.isconfirmed
+bool holder_exit_short  = holder_mode_active and trade_direction == -1 and ta.crossover(close, active_trail)  and barstate.isconfirmed
+bool holder_exit_event  = (holder_exit_long or holder_exit_short) and not na(active_trail)
+bool rejection_alert    = (buy_rejected or sell_rejected) and barstate.isconfirmed
+
+if sl_alert_event or holder_exit_event
+    is_trade_running := false
+    trade_active     := false
+    trade_direction  := 0
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 17 — SMC VARIABLES & DECLARATIONS
+// ══════════════════════════════════════════════════════════════════════════════
+var pivot swingHigh               = pivot.new(na,na,false)
+var pivot swingLow                = pivot.new(na,na,false)
+var pivot internalHigh            = pivot.new(na,na,false)
+var pivot internalLow             = pivot.new(na,na,false)
+var pivot equalHigh               = pivot.new(na,na,false)
+var pivot equalLow                = pivot.new(na,na,false)
+var trend swingTrend              = trend.new(0)
+var trend internalTrend           = trend.new(0)
+var equalDisplay equalHighDisplay = equalDisplay.new()
+var equalDisplay equalLowDisplay  = equalDisplay.new()
+var array<fairValueGap> fairValueGaps = array.new<fairValueGap>()
+var array<float> parsedHighs      = array.new<float>()
+var array<float> parsedLows       = array.new<float>()
+var array<float> highs_arr        = array.new<float>()
+var array<float> lows_arr         = array.new<float>()
+var array<int>   times_arr        = array.new<int>()
+var trailingExtremes trailing     = trailingExtremes.new()
+var array<orderBlock> swingOrderBlocks    = array.new<orderBlock>()
+var array<orderBlock> internalOrderBlocks = array.new<orderBlock>()
+var array<box> swingOrderBlocksBoxes      = array.new<box>()
+var array<box> internalOrderBlocksBoxes   = array.new<box>()
+
+var swingBullishColor        = styleInput == MONOCHROME ? MONO_BULLISH : swingBullColorInput
+var swingBearishColor        = styleInput == MONOCHROME ? MONO_BEARISH : swingBearColorInput
+var fairValueGapBullishColor = styleInput == MONOCHROME ? color.new(MONO_BULLISH,70) : fairValueGapsBullColorInput
+var fairValueGapBearishColor = styleInput == MONOCHROME ? color.new(MONO_BEARISH,70) : fairValueGapsBearColorInput
+var premiumZoneColor         = styleInput == MONOCHROME ? MONO_BEARISH : premiumZoneColorInput
+var discountZoneColor        = styleInput == MONOCHROME ? MONO_BULLISH : discountZoneColorInput
+
+varip int currentBarIndex    = bar_index
+varip int lastBarIndex       = bar_index
+alerts currentAlerts         = alerts.new()
+var initialTime              = time
+
+if barstate.isfirst
+    if showSwingOrderBlocksInput
+        for index = 1 to swingOrderBlocksSizeInput
+            swingOrderBlocksBoxes.push(box.new(na,na,na,na, xloc=xloc.bar_time, extend=extend.right))
+    if showInternalOrderBlocksInput
+        for index = 1 to internalOrderBlocksSizeInput
+            internalOrderBlocksBoxes.push(box.new(na,na,na,na, xloc=xloc.bar_time, extend=extend.right))
+
+bearishOrderBlockMitigationSource = orderBlockMitigationInput == CLOSE ? close : high
+bullishOrderBlockMitigationSource = orderBlockMitigationInput == CLOSE ? close : low
+atrMeasure        = ta.atr(200)
+volatilityMeasure = orderBlockFilterInput == ATR ? atrMeasure : ta.cum(ta.tr) / bar_index
+highVolatilityBar = (high - low) >= (2 * volatilityMeasure)
+parsedHigh        = highVolatilityBar ? low  : high
+parsedLow         = highVolatilityBar ? high : low
+
+parsedHighs.push(parsedHigh)
+parsedLows.push(parsedLow)
+highs_arr.push(high)
+lows_arr.push(low)
+times_arr.push(time)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 18 — SMC FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════════
+leg(int size) =>
+    var leg     = 0
+    newLegHigh  = high[size] > ta.highest(size)
+    newLegLow   = low[size]  < ta.lowest(size)
+    if newLegHigh
+        leg := BEARISH_LEG
+    else if newLegLow
+        leg := BULLISH_LEG
+    leg
+
+startOfNewLeg(int leg)     => ta.change(leg) != 0
+startOfBearishLeg(int leg) => ta.change(leg) == -1
+startOfBullishLeg(int leg) => ta.change(leg) == +1
+
+drawLabel(int labelTime, float labelPrice, string tag, color labelColor, string labelStyle) =>
+    var label l_abel = na
+    if modeInput == PRESENT
+        l_abel.delete()
+    l_abel := label.new(chart.point.new(labelTime,na,labelPrice), tag, xloc.bar_time, color=color(na), textcolor=labelColor, style=labelStyle, size=size.small)
+
+drawEqualHighLow(pivot p_ivot, float level, int size, bool equalHigh_flag) =>
+    equalDisplay e_qualDisplay = equalHigh_flag ? equalHighDisplay : equalLowDisplay
+    string tag      = 'EQL'
+    color eqColor   = swingBullishColor
+    string lblStyle = label.style_label_up
+    if equalHigh_flag
+        tag      := 'EQH'
+        eqColor  := swingBearishColor
+        lblStyle := label.style_label_down
+    if modeInput == PRESENT
+        line.delete(e_qualDisplay.l_ine)
+        label.delete(e_qualDisplay.l_abel)
+    e_qualDisplay.l_ine  := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time[size],na,level), xloc=xloc.bar_time, color=eqColor, style=line.style_dotted)
+    labelPosition         = math.round(0.5*(p_ivot.barIndex + bar_index - size))
+    e_qualDisplay.l_abel := label.new(chart.point.new(na,labelPosition,level), tag, xloc.bar_index, color=color(na), textcolor=eqColor, style=lblStyle, size=equalHighsLowsSizeInput)
+
+getCurrentStructure(int size, bool equalHighLow=false, bool internal=false) =>
+    currentLeg  = leg(size)
+    newPivot    = startOfNewLeg(currentLeg)
+    pivotLow    = startOfBullishLeg(currentLeg)
+    pivotHigh   = startOfBearishLeg(currentLeg)
+    if newPivot
+        if pivotLow
+            pivot p_ivot = equalHighLow ? equalLow : internal ? internalLow : swingLow
+            if equalHighLow and math.abs(p_ivot.currentLevel - low[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot, low[size], size, false)
+                currentAlerts.equalLows := true
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := low[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+            if not equalHighLow and not internal
+                trailing.bottom         := p_ivot.currentLevel
+                trailing.barTime        := p_ivot.barTime
+                trailing.barIndex       := p_ivot.barIndex
+                trailing.lastBottomTime := p_ivot.barTime
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel < p_ivot.lastLevel ? 'LL' : 'HL', swingBullishColor, label.style_label_up)
+        else
+            pivot p_ivot = equalHighLow ? equalHigh : internal ? internalHigh : swingHigh
+            if equalHighLow and math.abs(p_ivot.currentLevel - high[size]) < equalHighsLowsThresholdInput * atrMeasure
+                drawEqualHighLow(p_ivot, high[size], size, true)
+                currentAlerts.equalHighs := true
+            p_ivot.lastLevel    := p_ivot.currentLevel
+            p_ivot.currentLevel := high[size]
+            p_ivot.crossed      := false
+            p_ivot.barTime      := time[size]
+            p_ivot.barIndex     := bar_index[size]
+            if not equalHighLow and not internal
+                trailing.top         := p_ivot.currentLevel
+                trailing.barTime     := p_ivot.barTime
+                trailing.barIndex    := p_ivot.barIndex
+                trailing.lastTopTime := p_ivot.barTime
+            if showSwingsInput and not internal and not equalHighLow
+                drawLabel(time[size], p_ivot.currentLevel, p_ivot.currentLevel > p_ivot.lastLevel ? 'HH' : 'LH', swingBearishColor, label.style_label_down)
+
+drawStructure(pivot p_ivot, string tag, color structureColor, string lineStyle, string labelStyle, string labelSize) =>
+    var line  l_ine  = line.new(na,na,na,na, xloc=xloc.bar_time)
+    var label l_abel = label.new(na,na)
+    if modeInput == PRESENT
+        l_ine.delete()
+        l_abel.delete()
+    l_ine  := line.new(chart.point.new(p_ivot.barTime,na,p_ivot.currentLevel), chart.point.new(time,na,p_ivot.currentLevel), xloc.bar_time, color=structureColor, style=lineStyle)
+    l_abel := label.new(chart.point.new(na,math.round(0.5*(p_ivot.barIndex+bar_index)),p_ivot.currentLevel), tag, xloc.bar_index, color=color(na), textcolor=structureColor, style=labelStyle, size=labelSize)
+
+deleteOrderBlocks(bool internal=false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+    for [index,eachOB] in orderBlocks
+        bool crossed = false
+        if bearishOrderBlockMitigationSource > eachOB.barHigh and eachOB.bias == BEARISH
+            crossed := true
+            if internal
+                currentAlerts.internalBearishOrderBlock := true
+            else
+                currentAlerts.swingBearishOrderBlock    := true
+        else if bullishOrderBlockMitigationSource < eachOB.barLow and eachOB.bias == BULLISH
+            crossed := true
+            if internal
+                currentAlerts.internalBullishOrderBlock := true
+            else
+                currentAlerts.swingBullishOrderBlock    := true
+        if crossed
+            orderBlocks.remove(index)
+
+storeOrderBlock(pivot p_ivot, bool internal=false, int bias=1) =>
+    if (not internal and showSwingOrderBlocksInput) or (internal and showInternalOrderBlocksInput)
+        array<float> a_rray = na
+        int parsedIndex = na
+        if bias == BEARISH
+            a_rray      := parsedHighs.slice(p_ivot.barIndex, bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.max())
+        else
+            a_rray      := parsedLows.slice(p_ivot.barIndex, bar_index)
+            parsedIndex := p_ivot.barIndex + a_rray.indexof(a_rray.min())
+        orderBlock ob             = orderBlock.new(parsedHighs.get(parsedIndex), parsedLows.get(parsedIndex), times_arr.get(parsedIndex), bias)
+        array<orderBlock> blocks  = internal ? internalOrderBlocks : swingOrderBlocks
+        if blocks.size() >= 100
+            blocks.pop()
+        blocks.unshift(ob)
+
+drawOrderBlocks(bool internal=false) =>
+    array<orderBlock> orderBlocks = internal ? internalOrderBlocks : swingOrderBlocks
+    obSize = orderBlocks.size()
+    if obSize > 0
+        maxOB  = internal ? internalOrderBlocksSizeInput : swingOrderBlocksSizeInput
+        array<orderBlock> parsedOBs = orderBlocks.slice(0, math.min(maxOB, obSize))
+        array<box> b_oxes           = internal ? internalOrderBlocksBoxes : swingOrderBlocksBoxes
+        for [index, eachOB] in parsedOBs
+            obColor = styleInput == MONOCHROME ? (eachOB.bias == BEARISH ? color.new(MONO_BEARISH,80) : color.new(MONO_BULLISH,80)) : internal ? (eachOB.bias == BEARISH ? internalBearishOrderBlockColor : internalBullishOrderBlockColor) : (eachOB.bias == BEARISH ? swingBearishOrderBlockColor : swingBullishOrderBlockColor)
+            box b_ox = b_oxes.get(index)
+            b_ox.set_top_left_point(    chart.point.new(eachOB.barTime,na,eachOB.barHigh))
+            b_ox.set_bottom_right_point(chart.point.new(last_bar_time, na,eachOB.barLow))
+            b_ox.set_border_color(      internal ? na : obColor)
+            b_ox.set_bgcolor(           obColor)
+
+displayStructure(bool internal=false) =>
+    var bullishBar = true
+    var bearishBar = true
+    if internalFilterConfluenceInput
+        bullishBar := high - math.max(close,open) > math.min(close,open) - low
+        bearishBar := high - math.max(close,open) < math.min(close,open) - low
+    pivot p_ivot   = internal ? internalHigh : swingHigh
+    trend t_rend   = internal ? internalTrend : swingTrend
+    lineStyle      = internal ? line.style_dashed : line.style_solid
+    labelSize      = internal ? internalStructureSize : swingStructureSize
+    extraCond      = internal ? internalHigh.currentLevel != swingHigh.currentLevel and bullishBar : true
+    bullishColor   = styleInput == MONOCHROME ? MONO_BULLISH : internal ? internalBullColorInput : swingBullColorInput
+    if ta.crossover(close, p_ivot.currentLevel) and not p_ivot.crossed and extraCond
+        string tag = t_rend.bias == BEARISH ? CHOCH : BOS
+        if internal
+            currentAlerts.internalBullishCHoCH := tag == CHOCH
+            currentAlerts.internalBullishBOS   := tag == BOS
+        else
+            currentAlerts.swingBullishCHoCH    := tag == CHOCH
+            currentAlerts.swingBullishBOS      := tag == BOS
+        p_ivot.crossed := true
+        t_rend.bias    := BULLISH
+        displayCond = internal ? showInternalsInput and (showInternalBullInput == ALL or (showInternalBullInput == BOS and tag != CHOCH) or (showInternalBullInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBullInput == ALL or (showSwingBullInput == BOS and tag != CHOCH) or (showSwingBullInput == CHOCH and tag == CHOCH))
+        if displayCond
+            drawStructure(p_ivot, tag, bullishColor, lineStyle, label.style_label_down, labelSize)
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrderBlock(p_ivot, internal, BULLISH)
+    p_ivot    := internal ? internalLow : swingLow
+    extraCond := internal ? internalLow.currentLevel != swingLow.currentLevel and bearishBar : true
+    bearishColor = styleInput == MONOCHROME ? MONO_BEARISH : internal ? internalBearColorInput : swingBearColorInput
+    if ta.crossunder(close, p_ivot.currentLevel) and not p_ivot.crossed and extraCond
+        string tag = t_rend.bias == BULLISH ? CHOCH : BOS
+        if internal
+            currentAlerts.internalBearishCHoCH := tag == CHOCH
+            currentAlerts.internalBearishBOS   := tag == BOS
+        else
+            currentAlerts.swingBearishCHoCH    := tag == CHOCH
+            currentAlerts.swingBearishBOS      := tag == BOS
+        p_ivot.crossed := true
+        t_rend.bias    := BEARISH
+        displayCond = internal ? showInternalsInput and (showInternalBearInput == ALL or (showInternalBearInput == BOS and tag != CHOCH) or (showInternalBearInput == CHOCH and tag == CHOCH)) : showStructureInput and (showSwingBearInput == ALL or (showSwingBearInput == BOS and tag != CHOCH) or (showSwingBearInput == CHOCH and tag == CHOCH))
+        if displayCond
+            drawStructure(p_ivot, tag, bearishColor, lineStyle, label.style_label_up, labelSize)
+        if (internal and showInternalOrderBlocksInput) or (not internal and showSwingOrderBlocksInput)
+            storeOrderBlock(p_ivot, internal, BEARISH)
+
+fairValueGapBox(leftTime, rightTime, topPrice, bottomPrice, boxColor) =>
+    box.new(chart.point.new(leftTime,na,topPrice), chart.point.new(rightTime + fairValueGapsExtendInput * (time - time[1]),na,bottomPrice), xloc=xloc.bar_time, border_color=boxColor, bgcolor=boxColor)
+
+deleteFairValueGaps() =>
+    for [index, fvg] in fairValueGaps
+        if (low < fvg.bottom and fvg.bias == BULLISH) or (high > fvg.top and fvg.bias == BEARISH)
+            fvg.topBox.delete()
+            fvg.bottomBox.delete()
+            fairValueGaps.remove(index)
+
+drawFairValueGaps() =>
+    [lastClose, lastOpen, lastTime, currentHigh, currentLow, currentTime, last2High, last2Low] = request.security(syminfo.tickerid, fairValueGapsTimeframeInput, [close[1],open[1],time[1],high[0],low[0],time[0],high[2],low[2]], lookahead=barmerge.lookahead_off)
+    barDeltaPercent     = (lastClose - lastOpen) / (lastOpen * 100)
+    newTimeframe        = timeframe.change(fairValueGapsTimeframeInput)
+    threshold           = fairValueGapsThresholdInput ? ta.cum(math.abs(newTimeframe ? barDeltaPercent : 0)) / bar_index * 2 : 0
+    bullishFVG          = currentLow > last2High and lastClose > last2High and barDeltaPercent > threshold and newTimeframe
+    bearishFVG          = currentHigh < last2Low  and lastClose < last2Low  and -barDeltaPercent > threshold and newTimeframe
+    if bullishFVG
+        currentAlerts.bullishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentLow, last2High, BULLISH, fairValueGapBox(lastTime, currentTime, currentLow, math.avg(currentLow,last2High), fairValueGapBullishColor), fairValueGapBox(lastTime, currentTime, math.avg(currentLow,last2High), last2High, fairValueGapBullishColor)))
+    if bearishFVG
+        currentAlerts.bearishFairValueGap := true
+        fairValueGaps.unshift(fairValueGap.new(currentHigh, last2Low, BEARISH, fairValueGapBox(lastTime, currentTime, currentHigh, math.avg(currentHigh,last2Low), fairValueGapBearishColor), fairValueGapBox(lastTime, currentTime, math.avg(currentHigh,last2Low), last2Low, fairValueGapBearishColor)))
+
+getStyle(string style) =>
+    switch style
+        SOLID  => line.style_solid
+        DASHED => line.style_dashed
+        DOTTED => line.style_dotted
+
+drawLevels(string tf, bool sameTimeframe, string style, color levelColor) =>
+    [topLevel, bottomLevel, leftTime, rightTime] = request.security(syminfo.tickerid, tf, [high[1],low[1],time[1],time], lookahead=barmerge.lookahead_off)
+    float parsedTop         = sameTimeframe ? high : topLevel
+    float parsedBottom      = sameTimeframe ? low  : bottomLevel
+    int parsedLeftTime      = sameTimeframe ? time : leftTime
+    int parsedRightTime     = sameTimeframe ? time : rightTime
+    int parsedTopTime       = time
+    int parsedBottomTime    = time
+    if not sameTimeframe
+        int leftIndex       = times_arr.binary_search_rightmost(parsedLeftTime)
+        int rightIndex      = times_arr.binary_search_rightmost(parsedRightTime)
+        array<int>   tA     = times_arr.slice(leftIndex, rightIndex)
+        array<float> topA   = highs_arr.slice(leftIndex, rightIndex)
+        array<float> botA   = lows_arr.slice(leftIndex, rightIndex)
+        parsedTopTime       := tA.size() > 0 ? tA.get(topA.indexof(topA.max())) : initialTime
+        parsedBottomTime    := tA.size() > 0 ? tA.get(botA.indexof(botA.min())) : initialTime
+    var line topLine    = line.new(na,na,na,na, xloc=xloc.bar_time, color=levelColor, style=getStyle(style))
+    var line botLine    = line.new(na,na,na,na, xloc=xloc.bar_time, color=levelColor, style=getStyle(style))
+    var label topLabel  = label.new(na,na, xloc=xloc.bar_time, text=str.format('P{0}H',tf), color=color(na), textcolor=levelColor, size=size.small, style=label.style_label_left)
+    var label botLabel  = label.new(na,na, xloc=xloc.bar_time, text=str.format('P{0}L',tf), color=color(na), textcolor=levelColor, size=size.small, style=label.style_label_left)
+    topLine.set_first_point( chart.point.new(parsedTopTime, na, parsedTop))
+    topLine.set_second_point(chart.point.new(last_bar_time + 20*(time-time[1]), na, parsedTop))
+    topLabel.set_point(      chart.point.new(last_bar_time + 20*(time-time[1]), na, parsedTop))
+    botLine.set_first_point( chart.point.new(parsedBottomTime, na, parsedBottom))
+    botLine.set_second_point(chart.point.new(last_bar_time + 20*(time-time[1]), na, parsedBottom))
+    botLabel.set_point(      chart.point.new(last_bar_time + 20*(time-time[1]), na, parsedBottom))
+
+higherTimeframe(string tf) => timeframe.in_seconds() > timeframe.in_seconds(tf)
+
+updateTrailingExtremes() =>
+    trailing.top            := math.max(high, trailing.top)
+    trailing.lastTopTime    := trailing.top == high ? time : trailing.lastTopTime
+    trailing.bottom         := math.min(low,  trailing.bottom)
+    trailing.lastBottomTime := trailing.bottom == low ? time : trailing.lastBottomTime
+
+drawHighLowSwings() =>
+    var line  topLine    = line.new(na,na,na,na, color=swingBearishColor, xloc=xloc.bar_time)
+    var line  botLine    = line.new(na,na,na,na, color=swingBullishColor, xloc=xloc.bar_time)
+    var label topLabel   = label.new(na,na, color=color(na), textcolor=swingBearishColor, xloc=xloc.bar_time, style=label.style_label_down, size=size.tiny)
+    var label botLabel   = label.new(na,na, color=color(na), textcolor=swingBullishColor, xloc=xloc.bar_time, style=label.style_label_up, size=size.tiny)
+    rightTimeBar         = last_bar_time + 20*(time-time[1])
+    topLine.set_first_point(  chart.point.new(trailing.lastTopTime,    na, trailing.top))
+    topLine.set_second_point( chart.point.new(rightTimeBar,            na, trailing.top))
+    topLabel.set_point(       chart.point.new(rightTimeBar,            na, trailing.top))
+    topLabel.set_text(        swingTrend.bias == BEARISH ? 'Strong High' : 'Weak High')
+    botLine.set_first_point(  chart.point.new(trailing.lastBottomTime, na, trailing.bottom))
+    botLine.set_second_point( chart.point.new(rightTimeBar,            na, trailing.bottom))
+    botLabel.set_point(       chart.point.new(rightTimeBar,            na, trailing.bottom))
+    botLabel.set_text(        swingTrend.bias == BULLISH ? 'Strong Low' : 'Weak Low')
+
+drawZone(float labelLevel, int labelIndex, float top, float bottom, string tag, color zoneColor, string style) =>
+    var label l_abel = label.new(na,na, text=tag, color=color(na), textcolor=zoneColor, style=style, size=size.small)
+    var box   b_ox   = box.new(na,na,na,na, bgcolor=color.new(zoneColor,80), border_color=color(na), xloc=xloc.bar_time)
+    b_ox.set_top_left_point(    chart.point.new(trailing.barTime, na, top))
+    b_ox.set_bottom_right_point(chart.point.new(last_bar_time,    na, bottom))
+    l_abel.set_point(           chart.point.new(na, labelIndex, labelLevel))
+
+drawPremiumDiscountZones() =>
+    drawZone(trailing.top,    math.round(0.5*(trailing.barIndex+last_bar_index)), trailing.top, 0.95*trailing.top+0.05*trailing.bottom, 'Premium', premiumZoneColor, label.style_label_down)
+    eqLevel = math.avg(trailing.top, trailing.bottom)
+    drawZone(eqLevel,         last_bar_index, 0.525*trailing.top+0.475*trailing.bottom, 0.525*trailing.bottom+0.475*trailing.top, 'Equilibrium', equilibriumZoneColorInput, label.style_label_left)
+    drawZone(trailing.bottom, math.round(0.5*(trailing.barIndex+last_bar_index)), 0.95*trailing.bottom+0.05*trailing.top, trailing.bottom, 'Discount', discountZoneColor, label.style_label_up)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 19 — LIQUIDITY SWINGS ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+lq_get_data() => [high, low, volume]
+[lq_h, lq_l, lq_v] = request.security_lower_tf(syminfo.tickerid, lq_intrabarTf, lq_get_data())
+
+lq_get_counts(condition, top, btm) =>
+    var count = 0
+    var vol   = 0.
+    if condition
+        count := 0
+        vol   := 0.
+    else
+        if lq_intraPrecision
+            if bar_index > lq_length
+                if array.size(lq_v[lq_length]) > 0
+                    for [index, element] in lq_v[lq_length]
+                        vol += array.get(lq_l[lq_length], index) < top and array.get(lq_h[lq_length], index) > btm ? element : 0
+        else
+            vol += low[lq_length] < top and high[lq_length] > btm ? volume[lq_length] : 0
+        count += low[lq_length] < top and high[lq_length] > btm ? 1 : 0
+    [count, vol]
+
+lq_set_label(count, vol, x, y, css, lbl_style) =>
+    var label lbl = na
+    var label_size = switch lq_labelSize
+        'Tiny'   => size.tiny
+        'Small'  => size.small
+        'Normal' => size.normal
+    target = switch lq_filterOptions
+        'Count'  => count
+        'Volume' => vol
+    if ta.crossover(target, lq_filterValue)
+        lbl := label.new(x, y, str.tostring(vol, format.volume), style=lbl_style, size=label_size, color=#00000000, textcolor=css)
+    if target > lq_filterValue
+        label.set_text(lbl, str.tostring(vol, format.volume))
+
+lq_set_level(condition, crossed, value, count, vol, css) =>
+    var line lvl = na
+    target = switch lq_filterOptions
+        'Count'  => count
+        'Volume' => vol
+    if condition
+        if target[1] < lq_filterValue[1]
+            line.delete(lvl[1])
+        else if not crossed[1]
+            line.set_x2(lvl, bar_index - lq_length)
+        lvl := line.new(bar_index - lq_length, value, bar_index, value, color=na)
+    if not crossed[1]
+        line.set_x2(lvl, bar_index+3)
+    if crossed and not crossed[1]
+        line.set_x2(lvl, bar_index)
+        line.set_style(lvl, line.style_dashed)
+    if target > lq_filterValue
+        line.set_color(lvl, css)
+
+lq_set_zone(condition, x, top, btm, count, vol, css) =>
+    var box bx = na
+    target = switch lq_filterOptions
+        'Count'  => count
+        'Volume' => vol
+    if ta.crossover(target, lq_filterValue)
+        bx := box.new(x, top, x + count, btm, border_color=na, bgcolor=css)
+    if target > lq_filterValue
+        box.set_right(bx, x + count)
+
+var float ph_top     = na
+var float ph_btm     = na
+var bool  ph_crossed = false
+var       ph_x1      = 0
+var box   ph_bx      = box.new(na,na,na,na, bgcolor=color.new(lq_topAreaCss,80), border_color=na)
+
+var float pl_top     = na
+var float pl_btm     = na
+var bool  pl_crossed = false
+var       pl_x1      = 0
+var box   pl_bx      = box.new(na,na,na,na, bgcolor=color.new(lq_btmAreaCss,80), border_color=na)
+
+lq_ph = ta.pivothigh(lq_length, lq_length)
+bool is_new_ph = not na(lq_ph)
+[ph_count, ph_vol] = lq_get_counts(is_new_ph, ph_top, ph_btm)
+
+if is_new_ph and lq_showTop
+    ph_top     := high[lq_length]
+    ph_btm     := switch lq_area
+        'Wick Extremity' => math.max(close[lq_length], open[lq_length])
+        'Full Range'     => low[lq_length]
+    ph_x1      := bar_index - lq_length
+    ph_crossed := false
+    box.set_lefttop(     ph_bx, ph_x1, ph_top)
+    box.set_rightbottom( ph_bx, ph_x1, ph_btm)
+else
+    ph_crossed := close > ph_top ? true : ph_crossed
+    box.set_right(ph_bx, ph_crossed ? ph_x1 : bar_index+3)
+
+if lq_showTop
+    lq_set_zone(is_new_ph, ph_x1, ph_top, ph_btm, ph_count, ph_vol, lq_topAreaCss)
+    lq_set_level(is_new_ph, ph_crossed, ph_top, ph_count, ph_vol, lq_topCss)
+    lq_set_label(ph_count, ph_vol, ph_x1, ph_top, lq_topCss, label.style_label_down)
+
+lq_pl = ta.pivotlow(lq_length, lq_length)
+bool is_new_pl = not na(lq_pl)
+[pl_count, pl_vol] = lq_get_counts(is_new_pl, pl_top, pl_btm)
+
+if is_new_pl and lq_showBtm
+    pl_top     := switch lq_area
+        'Wick Extremity' => math.min(close[lq_length], open[lq_length])
+        'Full Range'     => high[lq_length]
+    pl_btm     := low[lq_length]
+    pl_x1      := bar_index - lq_length
+    pl_crossed := false
+    box.set_lefttop(     pl_bx, pl_x1, pl_top)
+    box.set_rightbottom( pl_bx, pl_x1, pl_btm)
+else
+    pl_crossed := close < pl_btm ? true : pl_crossed
+    box.set_right(pl_bx, pl_crossed ? pl_x1 : bar_index+3)
+
+if lq_showBtm
+    lq_set_zone(is_new_pl, pl_x1, pl_top, pl_btm, pl_count, pl_vol, lq_btmAreaCss)
+    lq_set_level(is_new_pl, pl_crossed, pl_btm, pl_count, pl_vol, lq_btmCss)
+    lq_set_label(pl_count, pl_vol, pl_x1, pl_btm, lq_btmCss, label.style_label_up)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 20 — 5-LAYER COMPOSITE SCORING & AI NARRATIVE
+// ══════════════════════════════════════════════════════════════════════════════
+emaTrend_tf(tf) =>
+    emaFast = request.security(syminfo.tickerid, tf, ta.ema(close,9),  barmerge.gaps_off, barmerge.lookahead_off)
+    emaSlow = request.security(syminfo.tickerid, tf, ta.ema(close,21), barmerge.gaps_off, barmerge.lookahead_off)
+    emaFast > emaSlow ? "G" : "R"
+
+trend_1m  = emaTrend_tf("1")
+trend_5m  = emaTrend_tf("5")
+trend_15m = emaTrend_tf("15")
+trend_30m = emaTrend_tf("30")
+trend_1h  = emaTrend_tf("60")
+trend_4h  = emaTrend_tf("240")
+trend_1d  = emaTrend_tf("D")
+trend_1w  = emaTrend_tf("W")
+trend_1M  = emaTrend_tf("M")
+
+volMA   = ta.sma(volume, volMaLen)
+[macdL, sigL, histL] = ta.macd(close, macdFastLen, macdSlowLen, macdSignalLen)
+macdB   = macdL > sigL ? "Bull" : "Bear"
+atrN    = ta.atr(14)
+atrS    = ta.sma(atrN, 20)
+atrHL   = atrN > atrS * 1.20 ? "High" : atrN < atrS * 0.80 ? "Low" : "Med"
+
+momentum    = ta.mom(close, 10)
+smoothedRSI = ta.ema(rsi, 5)
+smoothedMom = ta.ema(momentum, 5)
+aiTrend     = smoothedRSI > 50 and smoothedMom > 0 ? 1 : smoothedRSI < 50 and smoothedMom < 0 ? -1 : 0
+
+n_score(s) => s == "Long" or s == "Bull" ? 1.0 : s == "Short" or s == "Bear" ? -1.0 : 0.0
+
+get_narrative_status(tf) =>
+    [ls_tf, ft_tf, rsi_tf, rb_tf, rr_tf] = request.security(syminfo.tickerid, tf, [lastSwing, trend_fib, rsi, regimeBullish, regimeBearish], barmerge.gaps_off)
+    r_str  = rb_tf ? "Long"  : rr_tf ? "Short"  : "Neut"
+    v_str  = ls_tf == 1 ? "Bull" : ls_tf == -1 ? "Bear" : "Neut"
+    f_str  = ft_tf == 1 ? "Bull" : ft_tf == -1 ? "Bear" : "Neut"
+    ri_str = rsi_tf > 55 ? "Bull" : rsi_tf < 45 ? "Bear" : "Neut"
+    [r_str, v_str, f_str, ri_str]
+
+[sov_r, sov_v, sov_f, sov_ri] = get_narrative_status("D")
+[h4_r,  h4_v,  h4_f,  h4_ri]  = get_narrative_status("240")
+[h1_r,  h1_v,  h1_f,  h1_ri]  = get_narrative_status("60")
+[m15_r, m15_v, m15_f, m15_ri] = get_narrative_status("15")
+[m5_r,  m5_v,  m5_f,  m5_ri]  = get_narrative_status("5")
+
+sov_score  = n_score(sov_r) + n_score(sov_v) + n_score(sov_f)
+h4_score   = n_score(h4_r)  + n_score(h4_v)  + n_score(h4_f)
+h1_score   = n_score(h1_r)  + n_score(h1_v)  + n_score(h1_f)
+m15_score  = n_score(m15_r) + n_score(m15_v) + n_score(m15_f)
+m5_score   = n_score(m5_r)  + n_score(m5_v)  + n_score(m5_f)
+total_score = sov_score + h4_score + h1_score + m15_score + m5_score
+
+liq_bias = close > ph_top and not na(ph_top) ? "💧 BREAKING SWING HIGH" :
+     close < pl_btm and not na(pl_btm) ? "💧 BREAKING SWING LOW" :
+     close > ph_top * 0.995 and not na(ph_top) ? "🧲 NEAR SWING HIGH" :
+     close < pl_btm * 1.005 and not na(pl_btm) ? "🧲 NEAR SWING LOW" : "⚪ Neutral"
+
+current_session = vp_utcHour >= 13 and vp_utcHour < 22 ? "🗽 NY SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     vp_utcHour >= 7 and vp_utcHour < 16 ? "👑 LONDON SESSION (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")" :
+     "🗼 TOKYO/ASIA (" + str.tostring(vp_localHour) + ":xx " + tz_label + ")"
+
+string master_bias = if total_score >= 10 and atrHL == "High"
+    "🔥 SOVEREIGN HIGH MOMENTUM BULLISH"
+else if total_score <= -10 and atrHL == "High"
+    "🔥 SOVEREIGN HIGH MOMENTUM BEARISH"
+else if total_score >= 6
+    "📈 BULLISH BIAS (Strong)"
+else if total_score <= -6
+    "📉 BEARISH BIAS (Strong)"
+else if total_score >= 3
+    "📈 BULLISH BIAS (Moderate)"
+else if total_score <= -3
+    "📉 BEARISH BIAS (Moderate)"
+else if total_score > 0
+    "⏳ QUIET BULL — WAIT"
+else if total_score < 0
+    "⏳ QUIET BEAR — WAIT"
+else
+    "⚪ NEUTRAL — STAND ASIDE"
+
+string effective_bias = admin_manual_bias == "FORCE BULL" ? "📡 ADMIN: FORCED BULLISH" :
+     admin_manual_bias == "FORCE BEAR" ? "📡 ADMIN: FORCED BEARISH" :
+     admin_manual_bias == "SILENCE"    ? "🔇 ADMIN: SILENCE — STANDING ASIDE" :
+     master_bias
+
+string ai_advice = total_score >= 10 ? "Aggressive entry — 4-layer sovereign aligned." :
+     total_score >= 6  ? "Confident entry — bias confirmed. Verify chart." :
+     total_score >= 3  ? "Cautious entry — moderate alignment. Wait score > 6." :
+     total_score <= -10 ? "Aggressive short — 4-layer sovereign aligned." :
+     total_score <= -6  ? "Confident short — bearish bias confirmed." :
+     total_score <= -3  ? "Cautious short — wait score < -6." :
+     "Neutral. Stand aside. No edge present."
+
+// ── [NEW v7.0] TREE NARRATIVE BUILDER ────────────────────────────────────────
+// Builds a ├── / │ / └── formatted tree row for a single timeframe layer.
+// score_icon: 🟢 when all 3 factors agree bull, 🔴 all agree bear, ⚪ mixed.
+_tree_row(string tf_tag, string r, string v, string f, string ri, float sc, bool last_row) =>
+    string icon = sc >= 2.5 ? "🟢" : sc <= -2.5 ? "🔴" : sc > 0 ? "🟡" : sc < 0 ? "🟠" : "⚪"
+    string branch = last_row ? " └── " : " ├── "
+    string pipe   = last_row ? "      " : " │    "
+    branch + tf_tag + " " + icon + "\n" +
+     pipe + "R:" + r + " V:" + v + " F:" + f + " RSI:" + ri + "\n"
+
+// Pre-build the 5-layer tree string (used in both dashboard and broadcast)
+tree_narrative =
+     " ├── D  (Sovereign) " + (sov_score>=2.5?"🟢":sov_score<=-2.5?"🔴":sov_score>0?"🟡":sov_score<0?"🟠":"⚪") + "\n" +
+     " │    Regime :" + sov_r + " V.WAP :" + sov_v + " Fib Trend :" + sov_f + " RSI:" + sov_ri + "\n" +
+     " ├── H4 (Anchor) "    + (h4_score>=2.5?"🟢":h4_score<=-2.5?"🔴":h4_score>0?"🟡":h4_score<0?"🟠":"⚪") + "\n" +
+     " │    Regime :" + h4_r  + " V.WAP :" + h4_v  + " Fib Trend :" + h4_f  + " RSI:" + h4_ri  + "\n" +
+     " ├── H1 "             + (h1_score>=2.5?"🟢":h1_score<=-2.5?"🔴":h1_score>0?"🟡":h1_score<0?"🟠":"⚪") + "\n" +
+     " │    Regime :" + h1_r  + " V.WAP :" + h1_v  + " Fib Trend :" + h1_f  + " RSI:" + h1_ri  + "\n" +
+     " ├── M15 "            + (m15_score>=2.5?"🟢":m15_score<=-2.5?"🔴":m15_score>0?"🟡":m15_score<0?"🟠":"⚪") + "\n" +
+     " │    Regime :" + m15_r + " V.WAP :" + m15_v + " Fib Trend :" + m15_f + " RSI:" + m15_ri + "\n" +
+     " └── M5 "             + (m5_score>=2.5?"🟢":m5_score<=-2.5?"🔴":m5_score>0?"🟡":m5_score<0?"🟠":"⚪") + "\n" +
+     "      Regime :" + m5_r  + " V.WAP :" + m5_v  + " Fib Trend :" + m5_f  + " RSI:" + m5_ri  + "\n"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 20.5 — CLAW CONFIDENCE ENGINE
+// Weighted confluence score independent of the 4-layer fractal.
+// NOT a hard gate — measures conviction so agent can display confidence %.
+// ══════════════════════════════════════════════════════════════════════════════
+bool _vp_bull_ctx = vpEnabled and not na(vp_currentVAL) and close > vp_currentVAL
+bool _vp_bear_ctx = vpEnabled and not na(vp_currentVAH) and close < vp_currentVAH
+
+float claw_bull_score = 0.0
+float claw_bear_score = 0.0
+float claw_bull_max   = 0.0
+float claw_bear_max   = 0.0
+
+// MTF Trail (full + partial credit)
+claw_bull_score += claw_mtf_bull ? claw_mtf_wt : claw_partial_bull ? claw_mtf_wt * 0.4 : 0.0
+claw_bear_score += claw_mtf_bear ? claw_mtf_wt : claw_partial_bear ? claw_mtf_wt * 0.4 : 0.0
+claw_bull_max   += claw_mtf_wt
+claw_bear_max   += claw_mtf_wt
+
+// RSI momentum
+claw_bull_score += positive  ? claw_rsi_wt : 0.0
+claw_bear_score += negative  ? claw_rsi_wt : 0.0
+claw_bull_max   += claw_rsi_wt
+claw_bear_max   += claw_rsi_wt
+
+// VWAP direction
+claw_bull_score += vwapBullish ? claw_vwap_wt : 0.0
+claw_bear_score += vwapBearish ? claw_vwap_wt : 0.0
+claw_bull_max   += claw_vwap_wt
+claw_bear_max   += claw_vwap_wt
+
+// Fib trend
+claw_bull_score += trend_fib == 1  ? claw_fib_wt : 0.0
+claw_bear_score += trend_fib == -1 ? claw_fib_wt : 0.0
+claw_bull_max   += claw_fib_wt
+claw_bear_max   += claw_fib_wt
+
+// Volume Profile context
+claw_bull_score += _vp_bull_ctx ? claw_vp_wt : 0.0
+claw_bear_score += _vp_bear_ctx ? claw_vp_wt : 0.0
+claw_bull_max   += claw_vp_wt
+claw_bear_max   += claw_vp_wt
+
+// SMC Structure bias (uses swingTrend which is updated in Section 29 — reflects prev confirmed state)
+claw_bull_score += swingTrend.bias == BULLISH ? claw_struct_wt : 0.0
+claw_bear_score += swingTrend.bias == BEARISH ? claw_struct_wt : 0.0
+claw_bull_max   += claw_struct_wt
+claw_bear_max   += claw_struct_wt
+
+float claw_bull_conf = claw_bull_max > 0 ? math.round((claw_bull_score / claw_bull_max) * 100) : 0.0
+float claw_bear_conf = claw_bear_max > 0 ? math.round((claw_bear_score / claw_bear_max) * 100) : 0.0
+
+int claw_threshold = switch claw_mode
+    "Conservative" => 80
+    "Moderate"     => 60
+    "Aggressive"   => 40
+    "Custom"       => claw_custom_thr
+    => 60
+
+bool claw_bull_pass = claw_bull_conf >= claw_threshold
+bool claw_bear_pass = claw_bear_conf >= claw_threshold
+
+string claw_conf_str = buy_signal_confirmed  ? str.tostring(claw_bull_conf,"##") + "%" :
+                       sell_signal_confirmed ? str.tostring(claw_bear_conf,"##") + "%" :
+                       claw_exec_bull ? str.tostring(claw_bull_conf,"##") + "% bull" :
+                       claw_exec_bear ? str.tostring(claw_bear_conf,"##") + "% bear" : "—"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 21 — PIP TRACKER (DAILY RESET, ACTUAL vs EXPECTED)
+// ══════════════════════════════════════════════════════════════════════════════
+var int   pip_last_day         = 0
+var int   pip_total_signals    = 0
+var int   pip_wins             = 0
+var int   pip_losses           = 0
+var float pip_actual_tp1_sum   = 0.0
+var float pip_actual_tp2_sum   = 0.0
+var float pip_actual_tp3_sum   = 0.0
+var float pip_actual_sl_sum    = 0.0
+var float pip_exp_tp1_sum      = 0.0
+var float pip_exp_tp2_sum      = 0.0
+var float pip_exp_tp3_sum      = 0.0
+var float pip_exp_sl_sum       = 0.0
+var int   pip_tp1_hits         = 0
+var int   pip_tp2_hits         = 0
+var int   pip_tp3_hits         = 0
+var float pip_gross_wins_pips  = 0.0
+var float pip_gross_loss_pips  = 0.0
+
+if dayofmonth != pip_last_day
+    pip_last_day        := dayofmonth
+    pip_total_signals   := 0
+    pip_wins            := 0
+    pip_losses          := 0
+    pip_actual_tp1_sum  := 0.0
+    pip_actual_tp2_sum  := 0.0
+    pip_actual_tp3_sum  := 0.0
+    pip_actual_sl_sum   := 0.0
+    pip_exp_tp1_sum     := 0.0
+    pip_exp_tp2_sum     := 0.0
+    pip_exp_tp3_sum     := 0.0
+    pip_exp_sl_sum      := 0.0
+    pip_tp1_hits        := 0
+    pip_tp2_hits        := 0
+    pip_tp3_hits        := 0
+    pip_gross_wins_pips := 0.0
+    pip_gross_loss_pips := 0.0
+
+if barstate.isconfirmed and (buy_signal_confirmed or sell_signal_confirmed)
+    pip_total_signals := pip_total_signals + 1
+
+if barstate.isconfirmed and not na(locked_entry) and not na(locked_risk_dist)
+    if tp1_hit and not tp1_hit[1]
+        float ad = math.abs(locked_tp1 - locked_entry)
+        pip_actual_tp1_sum  := pip_actual_tp1_sum  + _pips(ad)
+        pip_exp_tp1_sum     := pip_exp_tp1_sum     + _pips(locked_risk_dist * 1.0)
+        pip_tp1_hits        := pip_tp1_hits        + 1
+        pip_gross_wins_pips := pip_gross_wins_pips + _pips(ad)
+        pip_wins            := pip_wins + 1
+    if tp2_hit and not tp2_hit[1]
+        float ad = math.abs(locked_tp2 - locked_entry)
+        pip_actual_tp2_sum  := pip_actual_tp2_sum  + _pips(ad)
+        pip_exp_tp2_sum     := pip_exp_tp2_sum     + _pips(locked_risk_dist * 1.5)
+        pip_tp2_hits        := pip_tp2_hits        + 1
+        pip_gross_wins_pips := pip_gross_wins_pips + _pips(math.abs(locked_tp2 - locked_tp1))
+    if tp3_hit and not tp3_hit[1]
+        float ad = math.abs(locked_tp3 - locked_entry)
+        pip_actual_tp3_sum  := pip_actual_tp3_sum  + _pips(ad)
+        pip_exp_tp3_sum     := pip_exp_tp3_sum     + _pips(locked_risk_dist * 2.0)
+        pip_tp3_hits        := pip_tp3_hits        + 1
+        pip_gross_wins_pips := pip_gross_wins_pips + _pips(math.abs(locked_tp3 - locked_tp2))
+    if sl_hit_flag and not sl_hit_flag[1]
+        float ad = math.abs(locked_sl - locked_entry)
+        pip_actual_sl_sum   := pip_actual_sl_sum   + _pips(ad)
+        pip_exp_sl_sum      := pip_exp_sl_sum      + _pips(locked_risk_dist)
+        pip_gross_loss_pips := pip_gross_loss_pips + _pips(ad)
+        pip_losses          := pip_losses + 1
+
+float pip_win_rate = pip_total_signals > 0 ? float(pip_wins) / float(pip_total_signals) * 100 : 0.0
+float pip_pf       = pip_gross_loss_pips > 0 ? pip_gross_wins_pips / pip_gross_loss_pips : pip_gross_wins_pips > 0 ? 999.0 : 0.0
+float pip_avg_tp1  = pip_tp1_hits > 0 ? pip_actual_tp1_sum / pip_tp1_hits : 0.0
+float pip_avg_tp2  = pip_tp2_hits > 0 ? pip_actual_tp2_sum / pip_tp2_hits : 0.0
+float pip_avg_tp3  = pip_tp3_hits > 0 ? pip_actual_tp3_sum / pip_tp3_hits : 0.0
+float pip_net      = pip_gross_wins_pips - pip_gross_loss_pips
+string pip_unit    = syminfo.type == "forex" ? "pips" : "pts"
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 22 — DAILY PERFORMANCE TRACKING (dpt_ arrays)
+// ══════════════════════════════════════════════════════════════════════════════
+// dpt_dir, dpt_tp1_hit, dpt_sl_hit, dpt_active_idx declared before Section 16 (forward-ref fix)
+var array<float>  dpt_score     = array.new<float>()
+var array<string> dpt_type      = array.new<string>()
+var array<string> dpt_sess      = array.new<string>()
+var array<float>  dpt_entry_px  = array.new<float>()
+var array<bool>   dpt_tp2_hit   = array.new<bool>()
+var array<bool>   dpt_tp3_hit   = array.new<bool>()
+var array<float>  dpt_max_pips  = array.new<float>()
+var array<int>    dpt_bar_count = array.new<int>()
+
+var int   dpt_total_sigs   = 0
+var int   dpt_rejected_cnt = 0
+var int   dpt_london_cnt   = 0
+var int   dpt_ny_cnt       = 0
+var int   dpt_asia_cnt     = 0
+var bool  dpt_report_sent  = false
+
+bool _new_trading_day = dayofweek != dayofweek[1]
+if _new_trading_day
+    array.clear(dpt_dir)
+    array.clear(dpt_score)
+    array.clear(dpt_type)
+    array.clear(dpt_sess)
+    array.clear(dpt_entry_px)
+    array.clear(dpt_tp1_hit)
+    array.clear(dpt_tp2_hit)
+    array.clear(dpt_tp3_hit)
+    array.clear(dpt_sl_hit)
+    array.clear(dpt_max_pips)
+    array.clear(dpt_bar_count)
+    dpt_total_sigs   := 0
+    dpt_rejected_cnt := 0
+    dpt_london_cnt   := 0
+    dpt_ny_cnt       := 0
+    dpt_asia_cnt     := 0
+    dpt_active_idx   := -1
+    dpt_report_sent  := false
+
+if buy_signal_confirmed or sell_signal_confirmed
+    string _sig_type = master_sync_buy or master_sync_sell ? "SYNC4" :
+         sovereign_counter_buy or sovereign_counter_sell ? "COUNTER" : "LOCAL"
+    string _sig_sess = vp_utcHour >= 13 and vp_utcHour < 22 ? "NY" :
+         vp_utcHour >= 7 and vp_utcHour < 16 ? "LDN" : "ASIA"
+    array.push(dpt_dir,      buy_signal_confirmed ? 1 : -1)
+    array.push(dpt_score,    total_score)
+    array.push(dpt_type,     _sig_type)
+    array.push(dpt_sess,     _sig_sess)
+    array.push(dpt_entry_px, locked_entry)
+    array.push(dpt_tp1_hit,  false)
+    array.push(dpt_tp2_hit,  false)
+    array.push(dpt_tp3_hit,  false)
+    array.push(dpt_sl_hit,   false)
+    array.push(dpt_max_pips, 0.0)
+    array.push(dpt_bar_count,0)
+    dpt_active_idx := array.size(dpt_dir) - 1
+    dpt_total_sigs := dpt_total_sigs + 1
+    if _sig_sess == "NY"
+        dpt_ny_cnt     := dpt_ny_cnt + 1
+    else if _sig_sess == "LDN"
+        dpt_london_cnt := dpt_london_cnt + 1
+    else
+        dpt_asia_cnt   := dpt_asia_cnt + 1
+
+if rejection_alert
+    dpt_rejected_cnt := dpt_rejected_cnt + 1
+
+if dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
+    int   _idx = dpt_active_idx
+    int   _dir = array.get(dpt_dir,      _idx)
+    float _ep  = array.get(dpt_entry_px, _idx)
+    if trade_active
+        float _raw = _dir == 1 ? high - _ep : _ep - low
+        float _cur = _pips(_raw)
+        if _cur > array.get(dpt_max_pips, _idx)
+            array.set(dpt_max_pips, _idx, _cur)
+        array.set(dpt_bar_count, _idx, array.get(dpt_bar_count, _idx) + 1)
+    if tp1_alert_event
+        array.set(dpt_tp1_hit, _idx, true)
+    if tp2_alert_event
+        array.set(dpt_tp2_hit, _idx, true)
+    if tp3_alert_event
+        array.set(dpt_tp3_hit, _idx, true)
+    if sl_alert_event
+        array.set(dpt_sl_hit, _idx, true)
+        dpt_active_idx := -1
+    if holder_exit_event
+        dpt_active_idx := -1
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 23 — SUPREME AGENT DASHBOARD
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── [NEW v7.0] LIVE P&L COMPUTATION ─────────────────────────────────────────
+// Computed per bar. Only meaningful when is_trade_running = true and locked_entry is set.
+float live_pnl_val = is_trade_running and not na(locked_entry) and not na(locked_position_size) ?
+     _live_pnl(locked_entry, close, trade_direction, locked_position_size) : 0.0
+float live_pips_val = is_trade_running and not na(locked_entry) ?
+     (trade_direction == 1 ? close - locked_entry : locked_entry - close) / (syminfo.type == "forex" ? (str.contains(syminfo.ticker,"JPY") ? 0.01 : 0.0001) : syminfo.mintick * 10) : 0.0
+string live_pnl_display = is_trade_running and not na(locked_entry) ?
+     _pnl_str(live_pnl_val) + " (" + (live_pips_val >= 0 ? "+" : "") + str.tostring(live_pips_val, "#.#") + " " + pip_unit + ")" :
+     "—"
+
+// ── TRADE SECTION STRING ──────────────────────────────────────────────────────
+string tradeSection = ""
+if trade_active and not na(locked_tp1)
+    string sz        = _size_display(locked_position_size)
+    string risk_line = show_risk_info ?
+         "\n 💡 Min-Unit Risk: ~$" + str.tostring(locked_actual_risk,"#.##") + " | Variable: $" + str.tostring(risk_per_trade) + " → " + sz :
+         "\n 💰 Risk: $" + str.tostring(risk_per_trade) + " | Size: " + sz
+    tradeSection :=
+         "\n 📊 Phase: " + trade_phase_display +
+         "\n ID: " + atm_trade_id +
+         "\n Dir: " + (trade_direction == 1 ? "🟢 LONG" : "🔴 SHORT") +
+         risk_line +
+         "\n 💵 Live P&L: " + live_pnl_display +
+         "\n 🚪 Entry: " + _p(locked_entry) + "  🛑 SL: " + _p(locked_sl) + "  (" + _pip_str(locked_risk_dist) + ")" +
+         "\n 🎯 TP1: " + _p(locked_tp1) + (tp1_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp1-locked_entry)) + ")" +
+         "\n 🎯 TP2: " + _p(locked_tp2) + (tp2_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp2-locked_entry)) + ")" +
+         "\n 🚀 TP3: " + _p(locked_tp3) + (tp3_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp3-locked_entry)) + ")" +
+         (holder_mode_active ? "\n 🔱 VWAP Trail: " + _p(vap_current) : "") +
+         "\n 📈 Peak: " + str.tostring(max_profit_pips, "#.##") + " " + pip_unit
+else
+    tradeSection := "\n ⚪ Scanning for setup..."
+
+var table dashTable  = na
+var string prevPlace = ""
+if dashOn and (na(dashTable) or panelPlacement != prevPlace)
+    if not na(dashTable)
+        table.delete(dashTable)
+    dashTable := switch panelPlacement
+        "Top-Right"     => table.new(position.top_right,     1, 1, border_width=0)
+        "Top-Left"      => table.new(position.top_left,      1, 1, border_width=0)
+        "Bottom-Right"  => table.new(position.bottom_right,  1, 1, border_width=0)
+        "Bottom-Left"   => table.new(position.bottom_left,   1, 1, border_width=0)
+        "Bottom-Center" => table.new(position.bottom_center, 1, 1, border_width=0)
+        => table.new(position.top_right, 1, 1, border_width=0)
+    prevPlace := panelPlacement
+
+if dashOn and not na(dashTable) and barstate.islast
+    string D = "\n"
+    string L = " ─────────────────────────" + D
+
+    string pf_ds = pip_pf == 0.0 ? "—" : pip_pf >= 99.0 ? "∞" : str.tostring(math.min(pip_pf,99.9),"#.##")
+    string wr_ds = pip_total_signals > 0 ? str.tostring(pip_win_rate,"##.#") + "%" : "—"
+    string net_ds = pip_net >= 0 ? "+" + str.tostring(pip_net,"#.#") : str.tostring(pip_net,"#.#")
+
+    string panelText =
+         " 🚀 ABSOLUTE DOLLAR AGENT" + D +
+         " Absolute Dollar Intelligence" + D +
+         L +
+         " 🔐 " + admin_manual_bias + " | 👑 Sovereign (" + sovereign_tf + "): " + sovereignStatus + D +
+         (asset_context != "" ? " 📌 " + asset_context + D : "") +
+         " 📊 Score: " + str.tostring(total_score,"#.#") + "/15  |  Public: " + (tg_public_sanitize?"SANITIZED":"FULL") + D +
+         L +
+         " ⏱️ FRACTAL 4-LAYER SYNC" + D +
+         " L1 Sovereign (" + sovereign_tf + "): " + sovereignStatus + D +
+         " L2 Anchor   (" + anchor_tf + "): " + (anchor_state==1?"BULL":anchor_state==-1?"BEAR":"NEUT") + D +
+         " L3 Filter   (" + filter_tf + "): " + (filter_state==1?"BULL":filter_state==-1?"BEAR":"NEUT") + D +
+         " L4 Exec     (" + timeframe.period + "): " + (exec_state==1?"BULL":exec_state==-1?"BEAR":"NEUT") + D +
+         " 🔄 " + agent_sync_phase + D +
+         L +
+         " 📊 CORE SIGNALS" + D +
+         " " + syminfo.ticker + " | " + timeframe.period + "  " + _p(close) + D +
+         " " + current_session + "  |  ATR: " + atrHL + " (" + str.tostring(atrN,"#.##") + ")" + D +
+         " 📅 Daily Context: " + pdh_pdl_status + D +
+         " 🦞 Claw Trail: " + claw_dir_str + D +
+         " 🎯 Confidence: " + claw_conf_str + " (need " + str.tostring(claw_threshold) + "%)" + D +
+         " ATM " + (posState==1?"🟢":posState==-1?"🔴":"⚪") + "  Regime " + (regimeBullish?"📈":regimeBearish?"📉":"⚪") + D +
+         " VWAP " + (lastSwing==1?"📈":lastSwing==-1?"📉":"⚪") + "  Fib " + (trend_fib==1?"📈":trend_fib==-1?"📉":"⚪") + D +
+         " RSI " + (rsi>pmom?"📈":rsi<nmom?"📉":"⚪") + " (" + str.tostring(rsi,"##") + ")  MACD: " + macdB + D +
+         L +
+         " 🦞 Claw " + (claw_exec_bull?"🟢":"🔴") + " M5:" + (claw_m5_trend==1?"▲":"▼") + " M15:" + (claw_m15_trend==1?"▲":"▼") + " H1:" + (claw_h1_trend==1?"▲":"▼") + D +
+         " 📈 MTF EMA (9/21)" + D +
+         " 1m"+(trend_1m=="G"?"📈":"📉")+" 5m"+(trend_5m=="G"?"📈":"📉")+" 15m"+(trend_15m=="G"?"📈":"📉")+" 30m"+(trend_30m=="G"?"📈":"📉")+" 1H"+(trend_1h=="G"?"📈":"📉") + D +
+         " 4H"+(trend_4h=="G"?"📈":"📉")+" 1D"+(trend_1d=="G"?"📈":"📉")+" 1W"+(trend_1w=="G"?"📈":"📉")+" 1M"+(trend_1M=="G"?"📈":"📉") + D +
+         L +
+         " 🧠 5-LAYER AI NARRATIVE  [" + str.tostring(total_score,"#.#") + "/15]" + D +
+         " " + effective_bias + D +
+         tree_narrative +
+         L +
+         " 💡 AGENT ADVICE" + D +
+         " " + ai_advice + D +
+         L +
+         " 💧 LIQUIDITY" + D +
+         " " + liq_bias + D +
+         " 🟢 Buy-side:  " + _p(ph_top) + D +
+         " 🔴 Sell-side: " + _p(pl_btm) + D +
+         L +
+         " 💰 TRADE SETUP" + D +
+         tradeSection + D +
+         L +
+         " 📅 TODAY" + D +
+         " Sigs: " + str.tostring(dpt_total_sigs) + "  Blocked: " + str.tostring(dpt_rejected_cnt) + "  LDN: " + str.tostring(dpt_london_cnt) + "  NY: " + str.tostring(dpt_ny_cnt) + D +
+         " TP1: " + str.tostring(pip_tp1_hits) + "  TP2: " + str.tostring(pip_tp2_hits) + "  TP3: " + str.tostring(pip_tp3_hits) + "  SL: " + str.tostring(pip_losses) + D +
+         " WR: " + wr_ds + "  PF: " + pf_ds + "  Net: " + net_ds + " " + pip_unit + D +
+         " Report: " + (dpt_report_sent ? "✅ SENT" : "⏳ " + str.tostring(report_hour_utc) + ":00 UTC") + D +
+         L +
+         " ⚠️ Not financial advice." + D +
+         " © Absolute Dollar 2026"
+
+    table.cell(dashTable, 0, 0, panelText,
+         text_color=dashTextColor, text_size=size.small,
+         text_halign=text.align_left, text_valign=text.align_top,
+         bgcolor=dashColor)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 24 — PERFORMANCE TABLE (5-COL × 10-ROW)
+// ══════════════════════════════════════════════════════════════════════════════
+color PT_BG    = color.new(#0d0d1a,85)
+color PT_HDR   = color.new(#1a1a3e,0)
+color PT_CHDR  = color.new(#2a2a5e,0)
+color PT_RA    = color.new(#0d1a2e,70)
+color PT_RB    = color.new(#0a1525,70)
+color PT_GOLD  = GOLD
+color PT_WHITE = color.black
+color PT_MUTED = color.new(color.white,50)
+color PT_GREEN = #00cc44
+color PT_RED   = #ff3344
+color PT_DIV   = color.new(#2a2a5e,40)
+
+var table perfTable = na
+
+if showPerfPanel and na(perfTable)
+    perfTable := table.new(position.bottom_left, 5, 10, border_width=1, border_color=color.new(#2a2a5e,35), frame_width=2, frame_color=color.new(#1a1a3e,25))
+else if not showPerfPanel and not na(perfTable)
+    table.delete(perfTable)
+    perfTable := na
+
+if showPerfPanel and not na(perfTable) and barstate.islast
+    table.cell(perfTable,0,0," ⚡ ABSOLUTE DOLLAR SUPREME AGENT", text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_left)
+    table.cell(perfTable,1,0,pip_unit,     text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+    table.cell(perfTable,2,0,"ACTUAL",     text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+    table.cell(perfTable,3,0,"EXPECTED",   text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+    table.cell(perfTable,4,0,"HITS",       text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+
+    table.cell(perfTable,0,1,"METRIC",     text_color=PT_MUTED,text_size=size.small,bgcolor=PT_CHDR,text_halign=text.align_left)
+    table.cell(perfTable,1,1,"UNIT",       text_color=PT_MUTED,text_size=size.small,bgcolor=PT_CHDR,text_halign=text.align_center)
+    table.cell(perfTable,2,1,"REAL",       text_color=PT_MUTED,text_size=size.small,bgcolor=PT_CHDR,text_halign=text.align_center)
+    table.cell(perfTable,3,1,"TARGET",     text_color=PT_MUTED,text_size=size.small,bgcolor=PT_CHDR,text_halign=text.align_center)
+    table.cell(perfTable,4,1,"COUNT",      text_color=PT_MUTED,text_size=size.small,bgcolor=PT_CHDR,text_halign=text.align_center)
+
+    table.cell(perfTable,0,2,"🎯 TP1 (1:1)",  text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_left)
+    table.cell(perfTable,1,2,pip_unit,          text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,2,2,pip_tp1_hits>0?str.tostring(pip_avg_tp1,"#.#"):"—",                      text_color=PT_GREEN,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,3,2,pip_tp1_hits>0?str.tostring(pip_exp_tp1_sum/pip_tp1_hits,"#.#"):"—",     text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,4,2,str.tostring(pip_tp1_hits),                                               text_color=PT_GOLD, text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+
+    table.cell(perfTable,0,3,"🎯 TP2 (1.5:1)",text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_left)
+    table.cell(perfTable,1,3,pip_unit,          text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,2,3,pip_tp2_hits>0?str.tostring(pip_avg_tp2,"#.#"):"—",                      text_color=PT_GREEN,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,3,3,pip_tp2_hits>0?str.tostring(pip_exp_tp2_sum/pip_tp2_hits,"#.#"):"—",     text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,4,3,str.tostring(pip_tp2_hits),                                               text_color=PT_GOLD, text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+
+    table.cell(perfTable,0,4,"🚀 TP3 (2:1)",  text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_left)
+    table.cell(perfTable,1,4,pip_unit,          text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,2,4,pip_tp3_hits>0?str.tostring(pip_avg_tp3,"#.#"):"—",                      text_color=PT_GREEN,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,3,4,pip_tp3_hits>0?str.tostring(pip_exp_tp3_sum/pip_tp3_hits,"#.#"):"—",     text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,4,4,str.tostring(pip_tp3_hits),                                               text_color=PT_GOLD, text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+
+    table.cell(perfTable,0,5,"💀 STOP LOSS",  text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_left)
+    table.cell(perfTable,1,5,pip_unit,          text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,2,5,pip_losses>0?"-"+str.tostring(pip_actual_sl_sum/pip_losses,"#.#"):"—",   text_color=PT_RED,  text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,3,5,pip_losses>0?"-"+str.tostring(pip_exp_sl_sum/pip_losses,"#.#"):"—",      text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,4,5,str.tostring(pip_losses),                                                 text_color=PT_RED,  text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+
+    for _c = 0 to 4
+        table.cell(perfTable,_c,6,"",bgcolor=PT_DIV)
+
+    float pf_disp = math.min(pip_pf,99.9)
+    string pf_ds2 = pip_pf==0.0?"—":pip_pf>=99.0?"∞":str.tostring(pf_disp,"#.##")
+    color wr_col  = pip_win_rate>=60?PT_GREEN:pip_win_rate>=40?PT_GOLD:PT_RED
+    table.cell(perfTable,0,7,"⚖️ PROFIT FACTOR", text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_left)
+    table.cell(perfTable,1,7,pf_ds2,               text_color=pip_pf>=2.0?PT_GREEN:pip_pf>=1.0?PT_GOLD:PT_RED,text_size=size.normal,bgcolor=PT_RA,text_halign=text.align_center)
+    table.cell(perfTable,2,7,_pf_tag(pip_pf),       text_color=pip_pf>=2.0?PT_GREEN:pip_pf>=1.0?PT_GOLD:PT_RED,text_size=size.small, bgcolor=PT_RA,text_halign=text.align_left)
+    table.cell(perfTable,3,7,"WIN RATE",             text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_right)
+    table.cell(perfTable,4,7,pip_total_signals>0?str.tostring(pip_win_rate,"##.#")+"%":"—",text_color=wr_col,text_size=size.small,bgcolor=PT_RA,text_halign=text.align_center)
+
+    color net_col = pip_net >= 0 ? PT_GREEN : PT_RED
+    string net_ss = pip_net >= 0 ? "+" + str.tostring(pip_net,"#.#") : str.tostring(pip_net,"#.#")
+    table.cell(perfTable,0,8,"📊 NET " + pip_unit + " TODAY",text_color=PT_WHITE,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_left)
+    table.cell(perfTable,1,8,net_ss,            text_color=net_col,  text_size=size.normal,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,2,8,"Score: "+str.tostring(total_score,"#.#")+"/15",text_color=PT_GOLD,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,3,8,str.tostring(pip_wins)+"W/"+str.tostring(pip_losses)+"L",text_color=PT_MUTED,text_size=size.small,bgcolor=PT_RB,text_halign=text.align_center)
+    table.cell(perfTable,4,8,"DAILY RESET",    text_color=PT_MUTED,text_size=size.tiny, bgcolor=PT_RB,text_halign=text.align_center)
+
+    table.cell(perfTable,0,9,"ABSOLUTE DOLLAR INTELLIGENCE", text_color=PT_GOLD, text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_left)
+    table.cell(perfTable,1,9,"",bgcolor=PT_HDR)
+    table.cell(perfTable,2,9,"SUPREME AGENT — ADSA v8.0", text_color=PT_MUTED,text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_center)
+    table.cell(perfTable,3,9,"",bgcolor=PT_HDR)
+    table.cell(perfTable,4,9,"© 2026", text_color=PT_MUTED,text_size=size.small,bgcolor=PT_HDR,text_halign=text.align_right)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 25 — SL AUTOPSY ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+_build_sl_autopsy() =>
+    string out = "STRUCTURAL INVALIDATION. Market invalidated the structural premise of this trade."
+    if str.contains(liq_bias,"BREAKING")
+        out := "LIQUIDITY TRAP: Institutions swept our stop to collect resting orders. Zone was structurally correct — sweep depth exceeded the ATR buffer. Next time: widen buffer or wait for sweep confirmation before entry."
+    else if atrHL == "Low"
+        out := "VOLATILITY COLLAPSE: ATR entered LOW state. Stop was not wide enough to survive noise in thin conditions. RULE: Do NOT enter when ATR = Low."
+    else if sovereign_state == -1 and trade_direction == 1
+        out := "SOVEREIGN VETO: Daily was BEARISH at entry. Counter-trend long against macro structure. RULE: Counter-trend = TP1 only. Never TP3. Structural probability was already discounted."
+    else if sovereign_state == 1 and trade_direction == -1
+        out := "SOVEREIGN VETO: Daily was BULLISH at entry. Counter-trend short. RULE: Exit at TP1, do not press into full 2:1."
+    else if math.abs(total_score) < 4
+        out := "WEAK 5-LAYER ALIGNMENT: Score below threshold. Score = " + str.tostring(total_score,"#.#") + "/15. Partial alignment produced a false signal. RULE: Never enter when abs(score) < 4."
+    else
+        out := "MACRO ROTATION: Higher-TF structure shifted post-entry. Trade was structurally valid — context rotated against us. Review session timing as a contributing factor."
+    out
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 26 — DUAL-CHANNEL BROADCAST ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+bool alert_liq_buy_sweep  = ta.crossover(close, ph_top)
+bool alert_liq_sell_sweep = ta.crossunder(close, pl_btm)
+
+bool trigger_signal = not silence_mode and (
+     buy_signal_confirmed or sell_signal_confirmed or
+     tp1_alert_event or tp2_alert_event or tp3_alert_event or
+     sl_alert_event or holder_exit_event or rejection_alert or
+     alert_liq_buy_sweep or alert_liq_sell_sweep or
+     currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH or
+     currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH or
+     vp_newSession)
+
+bool silence_broadcast = silence_mode and vp_newSession
+
+if useAgentAlerts and barstate.isconfirmed and (trigger_signal or silence_broadcast)
+
+    string sl_autopsy = _build_sl_autopsy()
+    string _sym       = syminfo.ticker + " | " + timeframe.period
+
+    string event_title = ""
+    string event_commentary = ""
+
+    if silence_broadcast
+        event_title       := "🔇 ADMIN SILENCE — STANDING ASIDE"
+        event_commentary  := atrHL == "Low" ? "⚠️ LOW VOLATILITY — chopzone active. No setups until ATR expands." :
+             math.abs(total_score) < 3 ? "⚠️ MIXED ALIGNMENT — Score: " + str.tostring(total_score,"#.#") + "/15. Conditions unclear." :
+             "Operator discretion active. Monitoring only."
+        if admin_commentary != ""
+            event_commentary += "\n💬 OPERATOR NOTE: " + admin_commentary
+
+    else if sl_alert_event
+        event_title      := "💀 STOP HIT — GLASS BOX AUTOPSY"
+        event_commentary := "🔬 " + sl_autopsy + "\n" +
+             "Peak before stop: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n" +
+             "Min-unit loss est.: ~$" + str.tostring(locked_actual_risk,"#.##") + "\n" +
+             "Score at entry: " + str.tostring(total_score,"#.#") + "/15\n" +
+             "Every loss is data. Reassessing now."
+
+    else if holder_exit_event
+        event_title      := "🏁 HOLDER MODE EXIT — VWAP CROSSED"
+        event_commentary := "Direction: " + (trade_direction==1?"LONG":"SHORT") + "\n" +
+             "VWAP Trail crossed: " + _p(vap_current) + "\n" +
+             "Peak run: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n" +
+             "Protocol: Close remaining position. Swing leg exhausted."
+
+    else if tp3_alert_event
+        event_title      := "🚀 TP3 HIT — HOLDER MODE ACTIVATED (2:1)"
+        event_commentary := "Close 75% at TP3 (" + _p(locked_tp3) + ").\n" +
+             "Trail 25% using Adaptive VWAP: " + _p(vap_current) + "\n" +
+             "Exit fires when price crosses back through VWAP."
+
+    else if tp2_alert_event
+        event_title      := "🎯🎯 TP2 HIT — MOVE STOP TO BREAKEVEN (1.5:1)"
+        event_commentary := "Take 50% off the position.\n" +
+             "Move SL to entry: " + _p(locked_entry) + "\n" +
+             "Position is now RISK-FREE. Hunting TP3 at " + _p(locked_tp3) + "."
+
+    else if tp1_alert_event
+        event_title      := "🎯 TP1 HIT — PARTIAL SECURED (1:1)"
+        event_commentary := "Take 25–33% off. Tighten SL toward entry.\n" +
+             "Next target: TP2 at " + _p(locked_tp2) + "."
+
+    else if rejection_alert
+        event_title      := "⛔ SIGNAL BLOCKED — REGIME FILTER"
+        event_commentary := buy_rejected ?
+             "LONG blocked. Sovereign: " + sovereignStatus + " | Score: " + str.tostring(total_score,"#.#") + "/15\n" +
+             "RSI/VWAP/Regime misaligned. Silence = a position." :
+             "SHORT blocked. Sovereign: " + sovereignStatus + " | Score: " + str.tostring(total_score,"#.#") + "/15\n" +
+             "Counter-trend entries fail more. Waiting for alignment."
+
+    else if buy_signal_confirmed
+        event_title := master_sync_buy       ? "🔥 MASTER SYNC LONG — 4-LAYER ALIGNED" :
+             sovereign_counter_buy ? "⚠️ SOVEREIGN COUNTER-TREND LONG"     :
+             "🟢 LONG SIGNAL CONFIRMED"
+        event_commentary := master_sync_buy ?
+             "All 4 layers BULLISH. Sovereign + Commander + Navigator + Executor aligned.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | ATR: " + atrHL + "\n" +
+             "High-probability trend continuation. R:R 2.0+ advised." :
+             sovereign_counter_buy ?
+             "⚠️ Daily is BEARISH. Counter-trend long.\n" +
+             "RULE: Target TP1 only. Do NOT hold to TP3.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15" :
+             "Local alignment confirmed. Sovereign: " + sovereignStatus + "\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | " + ai_advice
+
+    else if sell_signal_confirmed
+        event_title := master_sync_sell       ? "🥶 MASTER SYNC SHORT — 4-LAYER ALIGNED" :
+             sovereign_counter_sell ? "⚠️ SOVEREIGN COUNTER-TREND SHORT"    :
+             "🔴 SHORT SIGNAL CONFIRMED"
+        event_commentary := master_sync_sell ?
+             "All 4 layers BEARISH. Sovereign + Commander + Navigator + Executor aligned.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | ATR: " + atrHL + "\n" +
+             "High-probability trend continuation. R:R 2.0+ advised." :
+             sovereign_counter_sell ?
+             "⚠️ Daily is BULLISH. Counter-trend short.\n" +
+             "RULE: Target TP1 only. Do NOT hold to TP3.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15" :
+             "Local alignment confirmed. Sovereign: " + sovereignStatus + "\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | " + ai_advice
+
+    else if alert_liq_buy_sweep
+        event_title      := "⚠️ BUY-SIDE LIQUIDITY SWEPT"
+        event_commentary := "Pool at " + _p(ph_top) + " has been swept.\n" +
+             "FALSE BREAK → Reversal long incoming. Wait for CHoCH on lower TF.\n" +
+             "BREAKOUT    → Continuation above. Wait for retest.\n" +
+             "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Do not react immediately."
+
+    else if alert_liq_sell_sweep
+        event_title      := "⚠️ SELL-SIDE LIQUIDITY SWEPT"
+        event_commentary := "Pool at " + _p(pl_btm) + " has been swept.\n" +
+             "FALSE BREAK → Reversal short incoming. Wait for CHoCH.\n" +
+             "BREAKDOWN   → Continuation below. Wait for retest.\n" +
+             "Structure: " + (swingTrend.bias==BULLISH?"Bullish":"Bearish") + " | Do not react immediately."
+
+    else if currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH
+        event_title      := "📈 BULLISH STRUCTURE SHIFT (BOS/CHoCH)"
+        event_commentary := "Sellers are losing control. Scanning for discount pullback entries.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | Liq: " + liq_bias
+
+    else if currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH
+        event_title      := "📉 BEARISH STRUCTURE SHIFT (BOS/CHoCH)"
+        event_commentary := "Buyers are losing control. Scanning for premium pullback entries.\n" +
+             "Score: " + str.tostring(total_score,"#.#") + "/15 | Liq: " + liq_bias
+
+    else if vp_newSession
+        event_title      := "🕒 SESSION OPEN — ENVIRONMENTAL SCAN"
+        event_commentary := current_session + "\n" +
+             (atrHL=="Low"      ? "⚠️ LOW VOLATILITY: No signals until ATR expands." :
+              math.abs(total_score) < 3 ? "⚠️ MIXED ALIGNMENT: Score " + str.tostring(total_score,"#.#") + "/15. Waiting." :
+              total_score >= 3  ? "✅ BULLISH CONDITIONS: Score " + str.tostring(total_score,"#.#") + "/15." :
+              "✅ BEARISH CONDITIONS: Score " + str.tostring(total_score,"#.#") + "/15.") + "\n" +
+             "Sovereign: " + sovereignStatus + " | Liq: " + liq_bias
+
+    // ── Build trade parameters block ──────────────────────────────────────
+    string _tparams = ""
+    if (buy_signal_confirmed or sell_signal_confirmed) and not na(locked_tp1)
+        string sz        = _size_display(locked_position_size)
+        string risk_info = show_risk_info ?
+             "Min-unit risk: ~$" + str.tostring(locked_actual_risk,"#.##") + "\n" : ""
+        _tparams :=
+             _SEP2 + "\n" +
+             "🎯 TRADE PARAMETERS\n" +
+             _SEP2 + "\n" +
+             "Direction  : " + (buy_signal_confirmed ? "🟢 LONG"  : "🔴 SHORT") + "\n" +
+             "Entry      : " + _p(locked_entry) + "\n" +
+             "Stop Loss  : " + _p(locked_sl)    + "  (" + _pip_str(locked_risk_dist) + ")\n" +
+             "TP1 (1:1)  : " + _p(locked_tp1)   + "  (" + _pip_str(math.abs(locked_tp1-locked_entry)) + ")\n" +
+             "TP2 (1.5:1): " + _p(locked_tp2)   + "  (" + _pip_str(math.abs(locked_tp2-locked_entry)) + ")\n" +
+             "TP3 (2:1)  : " + _p(locked_tp3)   + "  (" + _pip_str(math.abs(locked_tp3-locked_entry)) + ")\n" +
+             "Risk $     : $" + str.tostring(risk_per_trade) + " → " + sz + "\n" +
+             risk_info +
+             "Trade ID   : " + atm_trade_id + "\n" +
+             "4-Layer    : " + agent_sync_phase + "\n"
+
+    // ── Build narrative block (NOW INCLUDES TREE FORMAT + PDH/PDL) ────────
+    string _narrative =
+             _SEP2 + "\n" +
+             "🧠 GLASS BOX AI NARRATIVE\n" +
+             _SEP2 + "\n" +
+             "Master Bias  : " + effective_bias + "\n" +
+             "Score        : " + str.tostring(total_score,"#.#") + "/15\n" +
+             "Daily Context: " + pdh_pdl_status + "\n" +
+             _SEP2 + "\n" +
+             "5-LAYER TREE\n" +
+             tree_narrative +
+             _SEP2 + "\n" +
+             "💡 AGENT ADVICE\n" +
+             ai_advice + "\n" +
+             "PF: " + (pip_pf==0.0?"—":str.tostring(math.min(pip_pf,99.9),"#.##")) +
+             "  WR: " + (pip_total_signals>0?str.tostring(pip_win_rate,"##.#")+"%":"—") + "\n"
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PREMIUM / WAR ROOM (full Glass Box)
+    // ══════════════════════════════════════════════════════════════════════
+    string prem = ""
+    prem += _SEP + "\n"
+    prem += "🔥 ABSOLUTE DOLLAR — WAR ROOM\n"
+    prem += "Supreme Agent ADSA v8.0\n"
+    prem += _SEP + "\n"
+    prem += "📊 Asset   : " + _sym + "\n"
+    prem += "💰 Price   : " + _p(close) + "\n"
+    prem += "🌍 Session : " + current_session + "\n"
+    prem += "📅 Daily   : " + pdh_pdl_status + "\n"
+    if asset_context != ""
+        prem += "📌 Context : " + asset_context + "\n"
+    prem += _SEP2 + "\n"
+    prem += "🔔 EVENT: " + event_title + "\n"
+    prem += _SEP2 + "\n"
+    prem += "📝 AGENT COMMENTARY\n"
+    prem += event_commentary + "\n"
+    if _tparams != ""
+        prem += _tparams
+    prem += _narrative
+    if admin_commentary != ""
+        prem += _SEP2 + "\n💬 OPERATOR NOTE\n" + admin_commentary + "\n"
+    prem += _SEP2 + "\n"
+    prem += "🧊 LIQUIDITY\n"
+    prem += "Buy-side  : " + _p(ph_top)  + "\n"
+    prem += "Sell-side : " + _p(pl_btm)  + "\n"
+    prem += "Context   : " + liq_bias    + "\n"
+    prem += _SEP + "\n"
+    prem += "⚠️ Not financial advice. © 2026 Absolute Dollar"
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PUBLIC / FREE CHANNEL (sanitized)
+    // ══════════════════════════════════════════════════════════════════════
+    string pub = ""
+    pub += _SEP + "\n"
+    pub += "🤖 ABSOLUTE DOLLAR — ATM AGENT\n"
+    pub += "Supreme Agent ADSA v8.0\n"
+    pub += _SEP + "\n"
+    pub += "📊 Asset   : " + _sym + "\n"
+    pub += "🌍 Session : " + current_session + "\n"
+    pub += "📅 Daily   : " + pdh_pdl_status + "\n"
+    if asset_context != ""
+        pub += "📌 Context : " + asset_context + "\n"
+    pub += _SEP2 + "\n"
+    pub += "🔔 EVENT: " + event_title + "\n"
+    pub += _SEP2 + "\n"
+
+    if tg_public_sanitize
+        if silence_broadcast
+            pub += "📝 COMMENTARY\n🔇 Standing aside — operator silenced signals.\n"
+        else if sl_alert_event
+            pub += "📝 COMMENTARY\n💀 Stop absorbed. Glass Box logging. Reassessing.\n"
+        else if tp3_alert_event
+            pub += "📝 COMMENTARY\n🚀 TP3 hit — full 2:1 run complete.\n"
+        else if tp2_alert_event
+            pub += "📝 COMMENTARY\n🎯🎯 TP2 hit — move stop to breakeven.\n"
+        else if tp1_alert_event
+            pub += "📝 COMMENTARY\n🎯 TP1 hit — partial secured.\n"
+        else if buy_signal_confirmed
+            pub += "📝 COMMENTARY\n" + (master_sync_buy?"🔥 Master Sync Long — 4 layers aligned.\n":sovereign_counter_buy?"⚠️ Counter-trend long — TP1 target only.\n":"🟢 Long signal confirmed.\n")
+        else if sell_signal_confirmed
+            pub += "📝 COMMENTARY\n" + (master_sync_sell?"🥶 Master Sync Short — 4 layers aligned.\n":sovereign_counter_sell?"⚠️ Counter-trend short — TP1 target only.\n":"🔴 Short signal confirmed.\n")
+        else if alert_liq_buy_sweep
+            pub += "📝 COMMENTARY\n⚠️ Buy-side liquidity swept — monitoring for setup.\n"
+        else if alert_liq_sell_sweep
+            pub += "📝 COMMENTARY\n⚠️ Sell-side liquidity swept — monitoring for setup.\n"
+        else if currentAlerts.swingBullishBOS or currentAlerts.swingBullishCHoCH
+            pub += "📝 COMMENTARY\n📈 Bullish structure shift confirmed.\n"
+        else if currentAlerts.swingBearishBOS or currentAlerts.swingBearishCHoCH
+            pub += "📝 COMMENTARY\n📉 Bearish structure shift confirmed.\n"
+        else if vp_newSession
+            pub += "📝 COMMENTARY\n🕒 " + current_session + " — scanning.\n"
+        pub += _SEP2 + "\n"
+        pub += "🧠 NARRATIVE\n"
+        pub += "Bias  : " + effective_bias    + "\n"
+        pub += "Score : " + str.tostring(total_score,"#.#") + "/15\n"
+        pub += "Sync  : " + agent_sync_phase  + "\n"
+        pub += "Daily : " + pdh_pdl_status    + "\n"
+        if buy_signal_confirmed or sell_signal_confirmed
+            pub += "Dir   : " + (buy_signal_confirmed?"🟢 LONG":"🔴 SHORT") + "\n"
+        pub += _SEP2 + "\n"
+        pub += "🔗 Full Glass Box report in War Room.\n"
+    else
+        pub += prem
+
+    pub += _SEP2 + "\n⚠️ Not financial advice. © 2026 Absolute Dollar"
+
+    // ── DISPATCH ──────────────────────────────────────────────────────────
+    if tg_1_active
+        alert(_tg_json(tg_chat_id_1, prem), alert.freq_once_per_bar_close)
+    if tg_2_active
+        alert(_tg_json(tg_chat_id_2, pub), alert.freq_once_per_bar_close)
+    if not tg_1_active and not tg_2_active
+        alert(prem, alert.freq_once_per_bar_close)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 27 — BITGET WEBHOOK OUTPUT
+// ══════════════════════════════════════════════════════════════════════════════
+if enable_bitget and barstate.isconfirmed and (buy_signal_confirmed or sell_signal_confirmed)
+    string bg_action = buy_signal_confirmed ? "buy" : "sell"
+    string bg_size   = str.tostring(locked_position_size, "#.####")
+    string bg_json   = '{"action":"' + bg_action + '","size":"' + bg_size + '","symbol":"' + syminfo.ticker + '","price":"' + _p(close) + '","sl":"' + _p(locked_sl) + '","tp1":"' + _p(locked_tp1) + '","id":"' + atm_trade_id + '","score":"' + str.tostring(total_score,"#.#") + '","sync":"' + agent_sync_phase + '"}'
+    alert(bg_json, alert.freq_once_per_bar_close)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 28 — DAILY REPORT ENGINE (PREMIUM + ML BLOCK)
+// ══════════════════════════════════════════════════════════════════════════════
+bool _daily_trigger = report_enabled and barstate.isconfirmed and
+     vp_utcHour == report_hour_utc and vp_utcHour != vp_utcHour[1] and
+     not dpt_report_sent and not _new_trading_day
+
+if _daily_trigger
+    dpt_report_sent := true
+    int _n = array.size(dpt_dir)
+    int _s4=0, int _lc=0, int _cc=0, int _lng=0, int _sht=0
+    int _t1=0, int _t2=0, int _t3=0, int _sl=0, int _op=0
+    float _bp=0.0, int _wp=0, float _ss=0.0, float _ps=0.0
+    string _tlog = ""
+
+    if _n > 0
+        for _i = 0 to _n - 1
+            int   _d  = array.get(dpt_dir,      _i)
+            string _t = array.get(dpt_type,     _i)
+            bool _t1h = array.get(dpt_tp1_hit,  _i)
+            bool _t2h = array.get(dpt_tp2_hit,  _i)
+            bool _t3h = array.get(dpt_tp3_hit,  _i)
+            bool _slh = array.get(dpt_sl_hit,   _i)
+            float _mx = array.get(dpt_max_pips, _i)
+            float _sc = array.get(dpt_score,    _i)
+            int   _bc = array.get(dpt_bar_count,_i)
+            _lng  := _d ==  1 ? _lng + 1 : _lng
+            _sht  := _d == -1 ? _sht + 1 : _sht
+            _s4   := _t == "SYNC4"   ? _s4 + 1 : _s4
+            _cc   := _t == "COUNTER" ? _cc + 1 : _cc
+            _lc   := _t == "LOCAL"   ? _lc + 1 : _lc
+            string _oc = _slh ? "SL❌" : _t3h ? "TP3✅" : _t2h ? "TP2✅" : _t1h ? "TP1✅" : "OPEN⏳"
+            if _slh
+                _sl := _sl + 1
+            else if _t3h
+                _t3 := _t3 + 1
+            else if _t2h
+                _t2 := _t2 + 1
+            else if _t1h
+                _t1 := _t1 + 1
+            else
+                _op := _op + 1
+            _ss   := _ss + _sc
+            if _mx > 0
+                _ps := _ps + _mx
+                _wp := _wp + 1
+            if _mx > _bp
+                _bp := _mx
+            _tlog := _tlog + str.tostring(_i+1) + ". " + (_d==1?"🟢L":"🔴S") + " ["+_t+"] Sc:"+str.tostring(_sc,"#.#")+" "+_oc+" pk:"+str.tostring(_mx,"#.#")+pip_unit+" "+str.tostring(_bc)+"bars\n"
+
+    int   _cls  = _t1 + _t2 + _t3 + _sl
+    float _wr   = _cls > 0 ? float(_t1+_t2+_t3) / float(_cls) * 100 : 0.0
+    float _avgS = _n > 0 ? _ss / _n : 0.0
+    float _avgP = _wp > 0 ? _ps / _wp : 0.0
+
+    string _assess = dpt_total_sigs == 0 ?
+         "🔇 ZERO SIGNAL SESSION. Environment below threshold or silence active. Capital preserved." :
+         _wr >= 70 and _avgS >= 7 ?
+         "🔥 HIGH QUALITY SESSION. Strong 5-layer alignment scores + strong outcomes. Parameters calibrated." :
+         _wr >= 50 and _cls >= 2 ?
+         "📊 AVERAGE SESSION. Acceptable. Review counter-trend trades for drag." :
+         _sl > _t1 + _t2 + _t3 ?
+         "⚠️ DIFFICULT SESSION. SL hits exceeded TP captures. Review: score threshold, session, ATR state." :
+         _cc > 0 and float(_cc) / float(_n) > 0.4 ?
+         "⚠️ HIGH COUNTER-TREND RATIO (" + str.tostring(math.round(float(_cc)/float(_n)*100)) + "%). Apply TP1-only rule strictly." :
+         "📊 STANDARD SESSION. Accumulating data."
+
+    string _ml = "[ATM_DATA_ADSA]\ndate=" + str.tostring(year)+"."+_pad(month)+"."+_pad(dayofmonth) +
+         "\nasset="+syminfo.ticker+"\ntf="+timeframe.period +
+         "\nsignals="+str.tostring(dpt_total_sigs)+"\nrejected="+str.tostring(dpt_rejected_cnt) +
+         "\nlong="+str.tostring(_lng)+"\nshort="+str.tostring(_sht) +
+         "\nsync4="+str.tostring(_s4)+"\nlocal="+str.tostring(_lc)+"\ncounter="+str.tostring(_cc) +
+         "\ntp1="+str.tostring(_t1)+"\ntp2="+str.tostring(_t2)+"\ntp3="+str.tostring(_t3)+"\nsl="+str.tostring(_sl)+"\nopen="+str.tostring(_op) +
+         "\nwin_rate="+str.tostring(_wr,"#.#")+"\navg_score="+str.tostring(_avgS,"#.##") +
+         "\navg_pips="+str.tostring(_avgP,"#.##")+"\nbest_pips="+str.tostring(_bp,"#.##") +
+         "\npf="+str.tostring(math.min(pip_pf,99.9),"#.##")+"\nnet_pips="+str.tostring(pip_net,"#.#") +
+         "\nlondon="+str.tostring(dpt_london_cnt)+"\nny="+str.tostring(dpt_ny_cnt)+"\nasia="+str.tostring(dpt_asia_cnt) +
+         "\natr_state="+atrHL+"\nsovereign="+sovereignStatus+"\ntotal_score="+str.tostring(total_score,"#.#") +
+         "\n[/ATM_DATA_ADSA]"
+
+    string _prem =
+         _SEP + "\n📊 ABSOLUTE DOLLAR SUPREME AGENT — DAILY REPORT\nADSA v8.0\n" + _SEP + "\n" +
+         "📅 " + str.tostring(year)+"-"+_pad(month)+"-"+_pad(dayofmonth) + "\n" +
+         "📊 " + syminfo.ticker + " | TF: " + timeframe.period + "\n" +
+         "📅 Daily: " + pdh_pdl_status + "\n" +
+         (asset_context!=""?"📌 "+asset_context+"\n":"") +
+         _SEP2 + "\n📈 SIGNAL SUMMARY\n" +
+         "Total: "+str.tostring(dpt_total_sigs)+"  Blocked: "+str.tostring(dpt_rejected_cnt)+"\n" +
+         "Long: "+str.tostring(_lng)+"  Short: "+str.tostring(_sht)+"\n" +
+         "4-Layer Sync: "+str.tostring(_s4)+"  Local: "+str.tostring(_lc)+"  Counter: "+str.tostring(_cc)+"\n" +
+         _SEP2 + "\n🎯 OUTCOMES\n" +
+         "TP1: "+str.tostring(_t1)+"  TP2: "+str.tostring(_t2)+"  TP3: "+str.tostring(_t3)+"  SL: "+str.tostring(_sl)+"  Open: "+str.tostring(_op)+"\n" +
+         "Win Rate: "+str.tostring(_wr,"#.#")+"%  PF: "+(pip_pf==0.0?"—":str.tostring(math.min(pip_pf,99.9),"#.##"))+"\n" +
+         "Net "+pip_unit+": "+(pip_net>=0?"+":"")+str.tostring(pip_net,"#.#")+"\n" +
+         _SEP2 + "\n📐 METRICS\n" +
+         "Avg Score: "+str.tostring(_avgS,"#.##")+"/15  Avg Peak: "+str.tostring(_avgP,"#.##")+" "+pip_unit+"\n" +
+         "ATR: "+atrHL+"  Sovereign: "+sovereignStatus+"  LDN: "+str.tostring(dpt_london_cnt)+"  NY: "+str.tostring(dpt_ny_cnt)+"  ASIA: "+str.tostring(dpt_asia_cnt)+"\n" +
+         _SEP2 + "\n📋 TRADE LOG\n" + (_n>0?_tlog:"No trades today.\n") +
+         _SEP2 + "\n🧠 AGENT SELF-ASSESSMENT\n" + _assess + "\n" +
+         (admin_commentary!=""?_SEP2+"\n💬 OPERATOR NOTE:\n"+admin_commentary+"\n":"") +
+         _SEP2 + "\n🤖 ML DATA BLOCK\n" + _ml + "\n" +
+         _SEP + "\n© 2026 Absolute Dollar | Not financial advice."
+
+    string _pub =
+         _SEP + "\n📊 ABSOLUTE DOLLAR — DAILY RECAP\n" + _SEP + "\n" +
+         str.tostring(year)+"-"+_pad(month)+"-"+_pad(dayofmonth) + "\n" +
+         syminfo.ticker + " | " + timeframe.period + "\n" +
+         "📅 " + pdh_pdl_status + "\n" +
+         (asset_context!=""?"📌 "+asset_context+"\n":"") +
+         _SEP2 + "\n" +
+         "Signals: "+str.tostring(dpt_total_sigs)+"  WR: "+str.tostring(_wr,"#.#")+"%\n" +
+         "TP3 (2:1): "+str.tostring(_t3)+" secured  SL: "+str.tostring(_sl)+"\n" +
+         "PF: "+(pip_pf==0.0?"—":str.tostring(math.min(pip_pf,99.9),"#.##"))+"  Score: "+str.tostring(total_score,"#.#")+"/15\n" +
+         _SEP2 + "\n" + _assess + "\n" +
+         _SEP2 + "\nFull report in War Room.\n© 2026 Absolute Dollar | Not financial advice."
+
+    if report_to_premium and tg_1_active
+        alert(_tg_json(tg_chat_id_1, _prem), alert.freq_once_per_bar_close)
+    if report_to_public and tg_2_active
+        alert(_tg_json(tg_chat_id_2, _pub), alert.freq_once_per_bar_close)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 29 — SMC EXECUTION
+// ══════════════════════════════════════════════════════════════════════════════
+candleColor = internalTrend.bias == BULLISH ? swingBullishColor : swingBearishColor
+finalColor  = showTrendInput ? candleColor : lrColor
+plotcandle(open, high, low, close, title="Candle", color=finalColor, wickcolor=finalColor, bordercolor=finalColor)
+
+if showHighLowSwingsInput or showPremiumDiscountZonesInput
+    updateTrailingExtremes()
+    if showHighLowSwingsInput
+        drawHighLowSwings()
+    if showPremiumDiscountZonesInput
+        drawPremiumDiscountZones()
+
+if showFairValueGapsInput
+    deleteFairValueGaps()
+
+getCurrentStructure(swingsLengthInput, false)
+getCurrentStructure(5, false, true)
+
+if showEqualHighsLowsInput
+    getCurrentStructure(equalHighsLowsLengthInput, true)
+if showInternalsInput or showInternalOrderBlocksInput or showTrendInput
+    displayStructure(true)
+if showStructureInput or showSwingOrderBlocksInput or showHighLowSwingsInput
+    displayStructure()
+if showInternalOrderBlocksInput
+    deleteOrderBlocks(true)
+if showSwingOrderBlocksInput
+    deleteOrderBlocks()
+if showFairValueGapsInput
+    drawFairValueGaps()
+
+if barstate.islastconfirmedhistory or barstate.islast
+    if showInternalOrderBlocksInput
+        drawOrderBlocks(true)
+    if showSwingOrderBlocksInput
+        drawOrderBlocks()
+
+lastBarIndex    := currentBarIndex
+currentBarIndex := bar_index
+newBar          = currentBarIndex != lastBarIndex
+
+if barstate.islastconfirmedhistory or (barstate.isrealtime and newBar)
+    if showDailyLevelsInput   and not higherTimeframe('D')
+        drawLevels('D', timeframe.isdaily,   dailyLevelsStyleInput,   dailyLevelsColorInput)
+    if showWeeklyLevelsInput  and not higherTimeframe('W')
+        drawLevels('W', timeframe.isweekly,  weeklyLevelsStyleInput,  weeklyLevelsColorInput)
+    if showMonthlyLevelsInput and not higherTimeframe('M')
+        drawLevels('M', timeframe.ismonthly, monthlyLevelsStyleInput, monthlyLevelsColorInput)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SECTION 30 — AUTOMATED TRADESGNL TRACING PLOTS
+// ══════════════════════════════════════════════════════════════════════════════
+plot(buy_signal_confirmed ? 1 : 0,  title="TradeSgnl Long Entry Channel",  display=display.none)
+plot(sell_signal_confirmed ? 1 : 0, title="TradeSgnl Short Entry Channel", display=display.none)
+plot(trade_active and (sl_alert_event or holder_exit_event) ? 1 : 0,  title="TradeSgnl Long Exit Channel",  display=display.none)
+plot(trade_active and (sl_alert_event or holder_exit_event) ? 1 : 0, title="TradeSgnl Short Exit Channel", display=display.none)
+
+// ===========================================================================
+// TradeSgnl Live Automation Execution & Alerts
+// ===========================================================================
+bool long_entry_confirmed  = buy_signal_confirmed
+bool short_entry_confirmed = sell_signal_confirmed
+
+bool long_tp1_confirmed    = trade_active and trade_direction == 1 and tp1_alert_event
+bool long_tp2_confirmed    = trade_active and trade_direction == 1 and tp2_alert_event
+bool long_tp3_confirmed    = trade_active and trade_direction == 1 and tp3_alert_event
+bool long_exit_confirmed   = trade_active and trade_direction == 1 and (sl_alert_event or holder_exit_event)
+
+bool short_tp1_confirmed   = trade_active and trade_direction == -1 and tp1_alert_event
+bool short_tp2_confirmed   = trade_active and trade_direction == -1 and tp2_alert_event
+bool short_tp3_confirmed   = trade_active and trade_direction == -1 and tp3_alert_event
+bool short_exit_confirmed  = trade_active and trade_direction == -1 and (sl_alert_event or holder_exit_event)
+
+if long_entry_confirmed
+    strategy.close("Short", comment="Short REVERSAL") // Suppressed alert: EA handles via exent=1
+    strategy.entry("Long", strategy.long, comment="Long Entry", alert_message=f_format_alert(long_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, risk_per_trade))
+
+if short_entry_confirmed
+    strategy.close("Long", comment="Long REVERSAL") // Suppressed alert: EA handles via exent=1
+    strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=f_format_alert(short_entry_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, risk_per_trade))
+
+if long_tp1_confirmed
+    strategy.close("Long", qty_percent=33.3, comment="Long TP1", alert_message=f_format_alert(long_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if long_tp2_confirmed
+    strategy.close("Long", qty_percent=50.0, comment="Long TP2", alert_message=f_format_alert(long_tp2_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if long_tp3_confirmed
+    strategy.close("Long", qty_percent=75.0, comment="Long TP3", alert_message=f_format_alert(long_tp3_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if long_exit_confirmed
+    strategy.close("Long", comment="Long Exit", alert_message=f_format_alert(long_exit_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+// ── TradeSgnl Automation: Auto-BE on TP1, Auto-Trail on TP2 ─────────────────
+if long_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry + ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_long_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if short_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry - ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_short_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if long_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_long_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
+
+if short_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_short_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
+
+if short_tp1_confirmed
+    strategy.close("Short", qty_percent=33.3, comment="Short TP1", alert_message=f_format_alert(short_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if short_tp2_confirmed
+    strategy.close("Short", qty_percent=50.0, comment="Short TP2", alert_message=f_format_alert(short_tp2_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if short_tp3_confirmed
+    strategy.close("Short", qty_percent=75.0, comment="Short TP3", alert_message=f_format_alert(short_tp3_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+if short_exit_confirmed
+    strategy.close("Short", comment="Short Exit", alert_message=f_format_alert(short_exit_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+// ══════════════════════════════════════════════════════════════════════════════
+// END — ABSOLUTE DOLLAR AGENT | ADA v8.0
+// © 2026 Absolute Dollar Intelligence | All Rights Reserved
+// Invite-Only | Not Financial Advice
+//
+// WHAT'S NEW IN v8.0 (vs v7.0 — Claw Protocol Edition):
+//
+//   ADDITION 1 — Claw Liquidity Trail Engine (Section 6.5)
+//     calcLiqTrail() function: ratcheting ATR trail around EMA
+//     MTF execution: M5 (precision), M15 (tactical), H1 (regime)
+//     claw_exec_trail plot (optional, showClawTrail toggle)
+//     claw_dir_str: "🟢 MTF BULL" / "🔴 MTF BEAR" / partial states
+//
+//   ADDITION 2 — Claw Confidence Engine (Section 20.5)
+//     Weighted 6-factor confluence score (MTF trail, RSI, VWAP, Fib, VP, SMC)
+//     Configurable mode: Conservative (80%) / Moderate (60%) / Aggressive (40%) / Custom
+//     NOT a hard gate — advisory only. Displayed in dashboard.
+//     claw_bull_conf / claw_bear_conf: 0–100% weighted score
+//
+//   ADDITION 3 — Smart RSI Momentum Signals (Section 6)
+//     smartBull/smartBear fire when RSI hits extreme zones (75+/25-)
+//     M5 RSI + EMA5 momentum confirmation (optional)
+//     Plotted as 🧠buy / 🧠sell labels on chart
+//     Wired into buy_signal_confirmed / sell_signal_confirmed via OR gate
+//
+//   ADDITION 4 — Fib Trend Gate (Section 7)
+//     requireFibTrend input: adds Fib trend as optional regime gate
+//     Combined with requireVWAP via 4-path logic tree
+//     regimeBullish / regimeBearish updated accordingly
+//
+//   ADDITION 5 — TradeSgnl BE + Trail Automation (Section 30)
+//     Auto-BE alert when TP1 is hit (modifybuy/modifysell with be_price)
+//     Auto-Trail alert when TP2 is hit (trail=1 with trail_start/trail_step)
+//     f_format_modify() function for template substitution
+//     All messages fully user-configurable per input group
+//
+//   ADDITION 6 — Orphan Trade Fix (Section 16)
+//     When a new signal fires on an open dpt trade with no TP1 hit,
+//     the orphaned trade is marked as SL (conservative) in dpt arrays
+//     holder_trail_price reset to na on new signal
+//
+//   ADDITION 7 — vol_dollar Fix (Section 30)
+//     strategy.entry() alert_message now passes risk_per_trade (actual dollar risk)
+//     instead of locked_actual_risk (min-unit reference) for correct TradeSgnl sizing
+//
+//   ADDITION 8 — Dashboard Updates (Section 23)
+//     "🦞 Claw Trail: [MTF direction]" line in Core Signals panel
+//     "🎯 Confidence: XX% (need YY%)" line in Core Signals panel
+//     "🦞 Claw M5/M15/H1 arrow" line before MTF EMA block
+//
+// INHERITED FROM v7.0 (unchanged):
+//   Live Dollar P&L Tracker | PDH/PDL Context Engine | Tree-Format AI Narrative
+//
+// TELEGRAM SETUP (unchanged from v6.1):
+//   Settings > Telegram Broadcast > paste Chat IDs > toggle ON
+//   TradingView Alert: Message = {{alert_message}}
+//   Webhook URL = https://api.telegram.org/botYOUR_TOKEN/sendMessage
+//
+// BITGET SETUP (unchanged from v6.1):
+//   Enable Bitget Webhook in settings
+//   Create TradingView alert with Webhook URL = your Bitget signal bot URL
+// ══════════════════════════════════════════════════════════════════════════════

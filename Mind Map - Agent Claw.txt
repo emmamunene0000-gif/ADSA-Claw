@@ -1,0 +1,786 @@
+Build "Absolute Dollar Terminal" — a live trading intelligence terminal. This is a single fullstack Replit app: React frontend + Express backend in one project, deployed always-on.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — WHAT THIS IS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A professional trading terminal for one operator. It mirrors the ADSA v8 Pine Script agent running on TradingView — every section, every label, every input, every message format. It receives live webhook signals from TradingView, displays them in real time, and runs AI research on a watchlist of 24 assets.
+
+The operator already has:
+- TradingView Premium running ADSA v8 Pine Script on XAUUSD 1-min
+- TradeSgnl Advanced executing trades on MT5 via webhooks
+- Deriv broker (MT5 CFDs + Vanilla Options)
+- Bybit (perpetual futures)
+
+This terminal is the operator's mission control screen — it does not replace TradingView, it extends it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — TECH STACK
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Frontend: React 18 + TypeScript + Vite
+Styling: Tailwind CSS — dark terminal, NO light mode
+Charts: lightweight-charts (npm package)
+Backend: Express.js (same project, runs on port 3001)
+Database: Replit PostgreSQL via pg package (raw SQL only, no ORM)
+AI: Anthropic Claude API (claude-sonnet-4-20250514) for watchlist research
+Real-time: Server-Sent Events (SSE)
+No auth, no Stripe, no multi-user complexity
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — DESIGN SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Terminal aesthetic. Sharp edges. Thin borders. Monospace prices. No rounded corners on panels.
+
+Colors (hardcode these, no theming):
+  Background:   #0a0a14
+  Panel:        #0f0f20
+  Card:         #13132a
+  Border:       #1e1e3a
+  Gold:         #FFD700   (score ≥6, headers, SYNC4 signals)
+  Teal:         #00c9a7   (BULL, LONG, TP hits, positive P&L)
+  Red:          #ff4757   (BEAR, SHORT, SL hit, negative P&L)
+  Amber:        #f4a523   (CAUTION, COUNTER, neutral states)
+  Text:         #e8e8f0
+  Muted:        #6b6b8a
+  Green dim bg: rgba(0,201,167,0.08)
+  Red dim bg:   rgba(255,71,87,0.08)
+  Gold dim bg:  rgba(255,215,0,0.08)
+
+Fonts:
+  JetBrains Mono — ALL prices, scores, pips, P&L values, the narrative tree
+  Inter — labels, section headers, badges
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — WATCHLIST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+These 24 assets match the operator's TradingView Red List exactly:
+
+XAUUSD, VOLATILITY_10_INDEX, VOLATILITY_25_1S_INDEX, VOLATILITY_50_INDEX,
+VOLATILITY_75_INDEX, VOLATILITY_100_INDEX, STEP_INDEX, STEP_INDEX_200,
+STEP_INDEX_300, STEP_INDEX_400, STEP_INDEX_500, NETHERLANDS_25, WALL_STREET_30,
+US_TECH_100, US_SMALL_CAP_2000, JAPAN_225, GBPUSD, EURAUD, NZDUSD,
+SOLUSD, XRPUSD, NEARUSD, ALGOUSD, TSLA, AAPL, META
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — BACKEND (server/index.js)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Five endpoints:
+
+POST /webhook/signal
+  Header required: x-adsa-secret (match env ADSA_SECRET)
+  Body: raw text string in TradeSgnl format:
+    "LICENSE_ID,XAUUSD,buy,vol_dollar=15,sl_price=4190.50,tp1_price=4205.00,pct1=0.33,tp2_price=4212.00,pct2=0.50,tp3_price=4219.00,exent=1"
+  Parse into fields: symbol, action, vol_dollar, sl_price, tp1_price, pct1, tp2_price, pct2, tp3_price
+  Save to signals table
+  SSE broadcast: { type: "signal_new", data: parsed_signal }
+  Return 200
+
+POST /webhook/message
+  Body: raw Glass Box text (the full {{alert_message}} string from TradingView)
+  Detect event_type from the EVENT line: extract the string after "🔔 EVENT: "
+  Save to messages table with content and event_type
+  SSE broadcast: { type: "glass_box", data: { content, event_type, timestamp } }
+  Return 200
+
+POST /webhook/outcome
+  Body: { trade_id, outcome_type, pts_actual }
+  outcome_type: "TP1" | "TP2" | "TP3" | "SL" | "HOLDER_EXIT"
+  Update signal status in db
+  Update daily performance aggregate
+  SSE broadcast: { type: "signal_update", data: { trade_id, outcome_type, pts_actual } }
+  Return 200
+
+GET /terminal/stream
+  SSE endpoint, Content-Type: text/event-stream
+  Keep alive with comment ping every 15 seconds
+  All connected clients receive all broadcast events
+
+GET /api/state
+  Returns JSON:
+  {
+    active_signal: (latest ACTIVE signal or null),
+    today_performance: { total_sigs, blocked, tp1_hits, tp2_hits, tp3_hits, sl_hits, net_pts, win_rate, profit_factor },
+    recent_signals: (last 20 signals, newest first),
+    recent_messages: (last 50 messages, newest first),
+    dashboard: (current dashboard state object — see Section 6)
+  }
+
+POST /api/research
+  Body: { symbol, question }
+  Calls Claude API with system prompt (Section 9)
+  Returns: { symbol, analysis, risk_verdict, key_level, session_context }
+
+Database init (run on server start if tables don't exist):
+  CREATE TABLE IF NOT EXISTS signals (
+    id SERIAL PRIMARY KEY,
+    trade_id TEXT UNIQUE,
+    symbol TEXT,
+    action TEXT,
+    direction TEXT,
+    vol_dollar FLOAT,
+    sl_price FLOAT, tp1_price FLOAT, tp2_price FLOAT, tp3_price FLOAT,
+    pct1 FLOAT, pct2 FLOAT,
+    score FLOAT DEFAULT 0,
+    sync_phase TEXT DEFAULT '',
+    master_bias TEXT DEFAULT '',
+    session TEXT DEFAULT '',
+    status TEXT DEFAULT 'ACTIVE',
+    pts_actual FLOAT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    content TEXT,
+    event_type TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS performance (
+    id SERIAL PRIMARY KEY,
+    date TEXT UNIQUE,
+    total_sigs INT DEFAULT 0, blocked INT DEFAULT 0,
+    tp1_hits INT DEFAULT 0, tp2_hits INT DEFAULT 0, tp3_hits INT DEFAULT 0, sl_hits INT DEFAULT 0,
+    gross_win_pts FLOAT DEFAULT 0, gross_loss_pts FLOAT DEFAULT 0,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE TABLE IF NOT EXISTS dashboard_state (
+    id INT PRIMARY KEY DEFAULT 1,
+    state JSONB DEFAULT '{}',
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
+Parser function (implement in server):
+parseTradeSgnlString(str):
+  parts = str.split(',')
+  symbol = parts[1]
+  action = parts[2]  // buy/sell/modifybuy/modifysell/closebuy/closesell
+  kvs = parts.slice(3) parsed as key=value
+  return { symbol, action, vol_dollar, sl_price, tp1_price, pct1, tp2_price, pct2, tp3_price, exent }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6 — DASHBOARD STATE OBJECT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The dashboard state mirrors every Pine Script input and computed value. This object is the single source of truth for the left panel. It is updated via SSE events and also stored in the dashboard_state table so it persists across refreshes.
+
+{
+  // Super Admin Control Panel (Pine Section 2 — grpAdmin)
+  sovereign_tf: "D",          // D / W / M / 60 / 240
+  admin_manual_bias: "AUTO",  // AUTO / FORCE BULL / FORCE BEAR / SILENCE
+  asset_context: "",           // 📌 note
+  admin_commentary: "",        // 💬 operator note
+  tg_public_sanitize: true,
+
+  // ATM Bot inputs (Pine Section 2 — grpATM)
+  a_buy: 3.5,
+  c_buy: 2,
+  a_sell: 3.5,
+  c_sell: 2,
+  enable_regime_filter: true,
+  require_vwap: false,
+  require_fib_trend: true,
+
+  // Claw inputs (Pine Section 2 — grpClaw)
+  claw_ma_len: 200,
+  claw_atr_len: 14,
+  claw_atr_mult: 1.25,
+
+  // Confidence Engine inputs (Pine Section 2 — grpConf)
+  claw_mode: "Moderate",      // Conservative / Moderate / Aggressive / Custom
+  claw_custom_thr: 60,
+  claw_mtf_wt: 1.5,
+  claw_rsi_wt: 1.0,
+  claw_vwap_wt: 1.0,
+  claw_fib_wt: 0.5,
+  claw_vp_wt: 0.5,
+  claw_struct_wt: 1.0,
+  enable_smart_signals: true,
+  rsi_extreme_bull: 70,
+  rsi_extreme_bear: 30,
+
+  // Risk Management inputs (Pine Section 2 — grpRisk)
+  risk_per_trade: 15.0,
+  sl_buffer_atr: 1.5,
+  show_risk_info: true,
+  prevent_reversals: false,
+  holder_trail_type: "Structural",  // VWAP / Structural
+
+  // Dashboard display inputs (Pine Section 2 — grpDash)
+  tz_offset_hours: 3,
+  tz_label: "EAT",
+
+  // Fractal 4-layer computed state
+  fractal: {
+    sovereign: { tf: "D", state: "NEUT" },   // BULL / BEAR / NEUT
+    anchor:    { tf: "60", state: "NEUT" },
+    filter:    { tf: "15", state: "NEUT" },
+    exec:      { tf: "1", state: "NEUT" }
+  },
+  agent_sync_phase: "SOVEREIGN NEUTRAL — STANDING ASIDE",
+
+  // Core signals computed
+  symbol: "XAUUSD",
+  timeframe: "1",
+  price: 0,
+  session: "",              // LDN / NY / ASIA with local time
+  atr_state: "Med",         // High / Med / Low
+  atr_value: 0,
+  pdh_pdl_status: "",
+  claw_dir_str: "⚪ MIXED",
+  claw_m5_trend: 0,         // 1=bull, -1=bear
+  claw_m15_trend: 0,
+  claw_h1_trend: 0,
+  confidence_str: "—",
+  claw_threshold: 60,
+  pos_state: 0,             // 1 / -1 / 0
+  regime_bullish: false,
+  regime_bearish: false,
+  vwap_direction: 0,        // 1 / -1 / 0
+  fib_trend: 0,             // 1 / -1 / 0
+  rsi_value: 0,
+  macd_bias: "Neut",        // Bull / Bear / Neut
+
+  // Claw MTF EMA grid (Pine Section 20)
+  ema_trends: {
+    "1m": "G", "5m": "G", "15m": "G", "30m": "G",
+    "1H": "G", "4H": "G", "1D": "G", "1W": "G", "1M": "G"
+  },  // G = green (bull), R = red (bear)
+
+  // 5-Layer AI Narrative (Pine Section 20)
+  total_score: 0,
+  master_bias: "⚪ NEUTRAL — STAND ASIDE",
+  effective_bias: "⚪ NEUTRAL — STAND ASIDE",
+  ai_advice: "Neutral. Stand aside. No edge present.",
+  liq_bias: "⚪ Neutral",
+  ph_top: 0,   // buy-side liquidity
+  pl_btm: 0,   // sell-side liquidity
+  sovereign_status: "NEUT",
+
+  // 5-layer narrative per TF
+  layers: {
+    D:   { score: 0, regime: "Neut", vwap: "Neut", fib: "Neut", rsi: "Neut" },
+    H4:  { score: 0, regime: "Neut", vwap: "Neut", fib: "Neut", rsi: "Neut" },
+    H1:  { score: 0, regime: "Neut", vwap: "Neut", fib: "Neut", rsi: "Neut" },
+    M15: { score: 0, regime: "Neut", vwap: "Neut", fib: "Neut", rsi: "Neut" },
+    M5:  { score: 0, regime: "Neut", vwap: "Neut", fib: "Neut", rsi: "Neut" }
+  },
+
+  // Active trade (Pine Section 14, 16, 23)
+  trade: {
+    active: false,
+    phase: "WAITING",        // WAITING / ENTRY / TP1_HIT / TP2_HIT / TP3_HIT / HOLDER_MODE / SL_HIT
+    trade_id: "NONE",
+    direction: 0,            // 1=LONG, -1=SHORT
+    entry: 0,
+    sl: 0,
+    tp1: 0, tp2: 0, tp3: 0,
+    risk_dist: 0,
+    position_size: 0,
+    actual_risk: 0,
+    live_pnl: 0,
+    live_pips: 0,
+    tp1_hit: false, tp2_hit: false, tp3_hit: false,
+    max_profit_pips: 0,
+    holder_trail_price: 0,
+    trade_phase_display: "⚪ SCANNING..."
+  },
+
+  // Today performance (Pine Section 21, 22)
+  today: {
+    total_sigs: 0,
+    blocked: 0,
+    london_cnt: 0,
+    ny_cnt: 0,
+    asia_cnt: 0,
+    tp1_hits: 0, tp2_hits: 0, tp3_hits: 0,
+    sl_hits: 0,
+    win_rate: 0,
+    profit_factor: 0,
+    net_pts: 0,
+    gross_win_pts: 0,
+    gross_loss_pts: 0,
+    pip_tp1_hits: 0, pip_tp2_hits: 0, pip_tp3_hits: 0,
+    pip_actual_tp1_sum: 0, pip_actual_tp2_sum: 0, pip_actual_tp3_sum: 0,
+    pip_exp_tp1_sum: 0, pip_exp_tp2_sum: 0, pip_exp_tp3_sum: 0,
+    pip_actual_sl_sum: 0, pip_exp_sl_sum: 0,
+    pip_losses: 0,
+    report_sent: false
+  }
+}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 7 — LAYOUT: 3-COLUMN TERMINAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Full viewport, no outer scroll. Overflow within panels only.
+
+Columns:
+  Left:   320px fixed — Agent Dashboard (scroll within)
+  Center: flex 1     — Chart top + Watchlist Research bottom
+  Right:  360px fixed — Signal Feed top + Message Feed bottom
+
+Header bar (full width, 40px):
+  Left:  🚀 ABSOLUTE DOLLAR TERMINAL  ·  [● LIVE teal pulse / ● OFFLINE red pulse]
+  Center: [active symbol] | [price] | [session] | [EAT time]
+  Right: [⚙️ settings icon]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 8 — LEFT PANEL: AGENT DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Render every section in this exact order. Use separator lines (─────────────────────) between sections exactly as the Pine dashboard does.
+
+8.1 HEADER
+  🚀 ABSOLUTE DOLLAR AGENT
+  Absolute Dollar Intelligence
+  ─────────────────────
+  🔐 [admin_manual_bias] | 👑 Sovereign ([sovereign_tf]): [sovereign_status]
+  📌 [asset_context]  (only if not empty)
+  📊 Score: [total_score]/15  |  Public: [SANITIZED/FULL]
+
+8.2 FRACTAL 4-LAYER SYNC
+  ─────────────────────
+  ⏱️ FRACTAL 4-LAYER SYNC
+  L1 Sovereign ([sovereign_tf]):   [BULL🟢 / BEAR🔴 / NEUT⚪]
+  L2 Anchor   ([anchor_tf]):       [BULL🟢 / BEAR🔴 / NEUT⚪]
+  L3 Filter   ([filter_tf]):       [BULL🟢 / BEAR🔴 / NEUT⚪]
+  L4 Exec     ([exec_tf]):         [BULL🟢 / BEAR🔴 / NEUT⚪]
+  🔄 [agent_sync_phase]
+
+  Color coding for sync phase:
+    contains "FULLY ALIGNED: BULLISH" → teal text
+    contains "FULLY ALIGNED: BEARISH" → red text
+    contains "SILENCE" → muted text
+    contains "OVERRIDE" → amber text
+    contains "PULLBACK" → amber text
+    else → muted text
+
+8.3 CORE SIGNALS
+  ─────────────────────
+  📊 CORE SIGNALS
+  [symbol] | [timeframe]  [formatted_price]
+  [session_string]  |  ATR: [atr_state] ([atr_value])
+  📅 Daily Context: [pdh_pdl_status]
+  🦞 Claw Trail: [claw_dir_str]
+  🎯 Confidence: [confidence_str] (need [claw_threshold]%)
+  ATM [state_dot]  Regime [state_dot]
+  VWAP [state_dot]  Fib [state_dot]
+  RSI [state_dot] ([rsi_value])  MACD: [macd_bias]
+
+  State dot: 📈 if bull/positive, 📉 if bear/negative, ⚪ if neutral
+
+8.4 CLAW MTF
+  ─────────────────────
+  🦞 Claw [bull🟢/bear🔴] M5:[▲/▼] M15:[▲/▼] H1:[▲/▼]
+  📈 MTF EMA (9/21)
+  1m[📈/📉] 5m[📈/📉] 15m[📈/📉] 30m[📈/📉] 1H[📈/📉]
+  4H[📈/📉] 1D[📈/📉] 1W[📈/📉] 1M[📈/📉]
+
+8.5 5-LAYER AI NARRATIVE
+  ─────────────────────
+  🧠 5-LAYER AI NARRATIVE  [[total_score]/15]
+  [effective_bias]
+  (render tree in JetBrains Mono, preserve exact whitespace and branch characters)
+  ├── D  (Sovereign) [icon]
+  │    Regime :[x] V.WAP :[x] Fib Trend :[x] RSI:[x]
+  ├── H4 (Anchor) [icon]
+  │    Regime :[x] V.WAP :[x] Fib Trend :[x] RSI:[x]
+  ├── H1 [icon]
+  │    Regime :[x] V.WAP :[x] Fib Trend :[x] RSI:[x]
+  ├── M15 [icon]
+  │    Regime :[x] V.WAP :[x] Fib Trend :[x] RSI:[x]
+  └── M5 [icon]
+       Regime :[x] V.WAP :[x] Fib Trend :[x] RSI:[x]
+
+  Layer icon logic (matches Pine tree_narrative):
+    score >= 2.5: 🟢  |  score <= -2.5: 🔴  |  score > 0: 🟡  |  score < 0: 🟠  |  else: ⚪
+
+8.6 AGENT ADVICE
+  ─────────────────────
+  💡 AGENT ADVICE
+  [ai_advice]
+
+8.7 LIQUIDITY
+  ─────────────────────
+  💧 LIQUIDITY
+  [liq_bias]
+  🟢 Buy-side:  [ph_top formatted]
+  🔴 Sell-side: [pl_btm formatted]
+
+8.8 TRADE SETUP (Pine Section 23 tradeSection)
+  ─────────────────────
+  💰 TRADE SETUP
+  If no active trade: ⚪ Scanning for setup...
+  If active:
+    📊 Phase: [trade_phase_display]
+    ID: [trade_id]
+    Dir: [🟢 LONG / 🔴 SHORT]
+    💡 Min-Unit Risk: ~$[actual_risk] | Variable: $[risk_per_trade] → [size] Lots
+    💵 Live P&L: [+/-$x.xx (+/-x.x pts)]
+    🚪 Entry: [price]  🛑 SL: [price]  ([pip_str])
+    🎯 TP1: [price] [✅ if hit]  ([pip_str])
+    🎯 TP2: [price] [✅ if hit]  ([pip_str])
+    🚀 TP3: [price] [✅ if hit]  ([pip_str])
+    📈 Peak: [max_profit_pips] pts
+
+  Trade card border: 1px solid teal if P&L positive, 1px solid red if negative, pulsing animation
+
+8.9 TODAY (Pine Section 22 daily tracking)
+  ─────────────────────
+  📅 TODAY
+  Sigs: [n]  Blocked: [n]  LDN: [n]  NY: [n]
+  TP1: [n]  TP2: [n]  TP3: [n]  SL: [n]
+  WR: [x]%  PF: [x]  Net: [+/-x] pts
+  Report: [⏳ 21:00 UTC / ✅ SENT]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 9 — PERFORMANCE TABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Below the dashboard, same left column, pinned to bottom. Matches Pine Section 24 exactly.
+
+5 columns: [METRIC] | [pts] | [ACTUAL] | [EXPECTED] | [HITS]
+Sub-header: METRIC | UNIT | REAL | TARGET | COUNT
+
+Row 1: 🎯 TP1 (1:1)
+  ACTUAL: avg actual TP1 pts (green text)
+  EXPECTED: avg expected TP1 pts (muted)
+  HITS: count (gold)
+
+Row 2: 🎯 TP2 (1.5:1) — same pattern
+
+Row 3: 🚀 TP3 (2:1) — same pattern
+
+Row 4: 💀 STOP LOSS
+  ACTUAL: -[avg actual SL pts] (red text)
+  EXPECTED: -[avg expected SL pts] (muted)
+  HITS: count (red)
+
+Empty divider row
+
+Row 6: ⚖️ PROFIT FACTOR
+  Col 1: PF value (green if ≥2.0, gold if ≥1.0, red if <1.0)
+  Col 2: [ELITE ✅ / STRONG ✅ / GOOD / MARGINAL ⚠️ / NEGATIVE ❌]
+  Col 3: "WIN RATE" label
+  Col 4: [x]% (green if ≥60%, gold if ≥40%, red otherwise)
+
+Row 7: 📊 NET pts TODAY
+  Col 1: net pts (green/red)
+  Col 2: Score:[x]/15 (gold)
+  Col 3: [x]W/[x]L (muted)
+  Col 4: DAILY RESET (muted tiny)
+
+Footer: ABSOLUTE DOLLAR INTELLIGENCE | SUPREME AGENT — ADSA v8.0 | © 2026
+
+PF tag logic (matches Pine _pf_tag()):
+  pf == 0: "NO DATA"
+  pf >= 2.5: "ELITE ✅"
+  pf >= 2.0: "STRONG ✅"
+  pf >= 1.5: "GOOD"
+  pf >= 1.0: "MARGINAL ⚠️"
+  default: "NEGATIVE ❌"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 10 — CENTER PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TOP (60% height): TradingView Chart
+  Embed TradingView Advanced Chart widget as iframe:
+  src: "https://www.tradingview.com/widgetembed/?frameElementId=tv_chart_1&symbol=OANDA:XAUUSD&interval=1&theme=dark&style=1&locale=en&toolbar_bg=0a0a14&enable_publishing=0&hide_side_toolbar=0&allow_symbol_change=1&save_image=0&studies=[]&hideideas=1&hide_top_toolbar=0"
+  Allow symbol to change when user clicks watchlist card
+
+BOTTOM (40% height): Watchlist Research Panel
+
+Title: 🔍 WATCHLIST RESEARCH — ADSA INTELLIGENCE
+
+Grid layout: 4 columns, 6 rows (24 assets)
+
+Each asset card:
+  [SYMBOL]
+  [last known price or —]
+  [direction dot: 🟢/🔴/⚪]
+  [mini score if available: x/15]
+
+Card states:
+  Active signal asset: gold border pulse
+  Researched: shows last research timestamp
+  Default: dark card, muted border
+
+Research interaction:
+  Click any card → opens research drawer on the right side of center panel
+  Drawer shows: symbol header + [ASK AGENT] input box
+  Pre-filled research questions as buttons:
+    "What is the current 4-layer alignment for [SYMBOL]?"
+    "Is [SYMBOL] in Premium or Discount zone?"
+    "What is the liquidity bias for [SYMBOL]?"
+    "Should I be LONG, SHORT, or STAND ASIDE on [SYMBOL]?"
+  User can also type a custom question
+  Click Ask → POST /api/research → display Claude response in ADSA voice
+
+Research response display (matches ADSA Glass Box style):
+  ━━━━━━━━━━━━━━━━━━━━━
+  🧠 AGENT RESEARCH — [SYMBOL]
+  ━━━━━━━━━━━━━━━━━━━━━
+  [enhanced_commentary]
+  ─────────────────────
+  Risk Verdict: [EXECUTE/CAUTION/STAND_ASIDE/COUNTER_TREND_ONLY]
+  Key Level: [price]
+  Session Context: [text]
+  Max TP: [TP1_ONLY/TP2/TP3/HOLDER_MODE]
+  Confidence: [x]%
+  ━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 11 — RIGHT PANEL: SIGNAL FEED + MESSAGE FEED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+TOP HALF: Live Signal Cards
+
+Header: 📡 LIVE SIGNALS  [count badge]
+
+Each card (newest on top):
+  ┌─────────────────────────────────────┐
+  │ [🟢 LONG / 🔴 SHORT] [SYMBOL] [SESSION badge] [time]
+  │ ID: ATM-YYYYMMDD-HHMM-DIR-N
+  │ Entry: [x]  ·  SL: [x]  ([pips] pts)
+  │ TP1: [x]  TP2: [x]  TP3: [x]
+  │ Score: [x]/15 [colored badge]
+  │ 4-Layer: [sync_phase]
+  │ [TP1✅] [TP2✅] [TP3✅] [SL💀] — appear on outcome events
+  └─────────────────────────────────────┘
+
+Card left border color:
+  LONG + score ≥6: teal
+  LONG + score <6: teal dim
+  SHORT + score ≤-6: red
+  SHORT + score >-6: red dim
+  COUNTER: gold
+
+Score badge color (matches Pine color logic):
+  ≥6: gold background
+  3-5: teal background
+  0-2: amber background
+  negative: red background
+
+Animation: slide in from top, 200ms ease-out
+
+Max 20 cards. When new arrives and count > 20, oldest fades out.
+
+BOTTOM HALF: Glass Box Message Feed
+
+Header: 📱 WAR ROOM FEED  [unread count badge]
+
+Each message card (newest on top):
+  [EVENT TYPE badge]  [timestamp in EAT]
+  [full message content in JetBrains Mono, pre-wrap, preserving all ── chars]
+
+Message card left border:
+  event contains "LONG" or "SYNC BUY" or "BULL": teal
+  event contains "SHORT" or "SYNC SELL" or "BEAR": red
+  event contains "TP1" or "TP2" or "TP3": gold
+  event contains "SL" or "STOP HIT" or "AUTOPSY": red dim
+  event contains "LIQUIDITY" or "SWEPT": amber
+  event contains "SESSION" or "REPORT": #1e1e3a (subtle)
+  event contains "BLOCKED" or "REJECTION": amber dim
+  default: muted border
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 12 — SETTINGS PANEL (⚙️ modal)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Opens as a slide-in drawer from the right when ⚙️ is clicked.
+All inputs mirror the Pine Script Section 2 inputs exactly.
+Changes save to localStorage immediately and POST to /api/settings.
+
+Group: 🔐 SUPER ADMIN CONTROL PANEL
+  Sovereign TF: select [D, W, M, 60, 240] default D
+  Manual Bias Override: select [AUTO, FORCE BULL, FORCE BEAR, SILENCE] default AUTO
+  Asset Context (Watchlist Note): text input
+  Operator Commentary: text input
+  Sanitize Public Channel: toggle
+
+Group: 🤖 ATM BOT SETTINGS
+  Buy Sensitivity: number 3.5
+  Buy ATR Period: number 2
+  Sell Sensitivity: number 3.5
+  Sell ATR Period: number 2
+  Enable Regime Filter: toggle true
+  Require VWAP Confirmation: toggle false
+  Require Fib Trend Gate: toggle true
+
+Group: 🦞 CLAW LIQUIDITY TRAIL
+  Trail MA Length: number 200
+  Trail ATR Length: number 14
+  Trail ATR Mult: number 1.25
+
+Group: 🧠 CONFIDENCE ENGINE
+  Confidence Mode: select [Conservative, Moderate, Aggressive, Custom] default Moderate
+  Custom Threshold %: number 60
+  MTF Trail Weight: number 1.5
+  RSI Weight: number 1.0
+  VWAP Weight: number 1.0
+  Fib Weight: number 0.5
+  VP Weight: number 0.5
+  SMC Structure Weight: number 1.0
+  Smart RSI Momentum Signals: toggle true
+  Smart Bull RSI ≥: number 70
+  Smart Bear RSI ≤: number 30
+
+Group: 💰 RISK MANAGEMENT
+  Risk Per Trade ($): number 15.0
+  SL Buffer (ATR Multiplier): number 1.5
+  Show Min-Unit Actual Risk: toggle true
+  Strict One-Trade Rule: toggle false
+  Holder Mode Trail: select [VWAP, Structural] default Structural
+
+Group: 📐 LINREG SETTINGS
+  Signal Smoothing: number 21
+  Simple MA Signal: toggle true
+  Use LinReg Candles: toggle false
+  LinReg Length: number 11
+
+Group: ⏳ LONGEVITY ZONES
+  Show Zones: toggle true
+  Zone Length: number 5
+
+Group: 📊 DASHBOARD
+  Show Dashboard: toggle true
+  Panel Placement: select [Top-Right, Top-Left, Bottom-Right, Bottom-Left] default Top-Right
+  Show Performance Table: toggle true
+  UTC Offset (3=Nairobi/EAT): number 3
+  Timezone Label: text EAT
+
+Group: 📉 OSCILLATORS
+  MACD Fast: 12 | MACD Slow: 26 | MACD Signal: 9
+  Stoch Length: 14 | Stoch K: 3 | Stoch D: 3
+  Volume MA: 20
+
+Group: 📊 DAILY PERFORMANCE REPORT
+  Enable Daily Report: toggle true
+  Report Hour (UTC): number 21
+
+Group: 🔗 WEBHOOK SETTINGS
+  TradeSgnl Forward URL: text input (where to relay signals)
+  ADSA Webhook Secret: text input (validates incoming webhooks)
+  Replit App URL: text (this app's URL, auto-filled)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 13 — HELPER FUNCTIONS (implement in both frontend and backend)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+formatPrice(v: number): string
+  // Exact match of Pine _p() function
+  const t = Math.abs(v);
+  if (t >= 10000) return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (t >= 100)   return v.toFixed(2);
+  if (t >= 1)     return v.toFixed(4);
+  return v.toFixed(5);
+
+formatPips(entry: number, price: number, symbol: string): string
+  // For XAUUSD and indices: pts. For forex: pips (0.0001 or 0.01 for JPY)
+  const dist = Math.abs(price - entry);
+  if (symbol.includes('JPY')) return (dist / 0.01).toFixed(1) + ' pips';
+  if (['GBPUSD','EURUSD','NZDUSD','EURAUD'].includes(symbol)) return (dist / 0.0001).toFixed(1) + ' pips';
+  return dist.toFixed(2) + ' pts';
+
+pfTag(pf: number): string
+  if pf === 0: return "NO DATA"
+  if pf >= 2.5: return "ELITE ✅"
+  if pf >= 2.0: return "STRONG ✅"
+  if pf >= 1.5: return "GOOD"
+  if pf >= 1.0: return "MARGINAL ⚠️"
+  return "NEGATIVE ❌"
+
+scoreColor(score: number): string
+  if score >= 6:  return "#FFD700"
+  if score >= 3:  return "#00c9a7"
+  if score >= 0:  return "#f4a523"
+  if score >= -3: return "#6b6b8a"
+  return "#ff4757"
+
+layerIcon(score: number): string
+  if score >= 2.5:  return "🟢"
+  if score <= -2.5: return "🔴"
+  if score > 0:     return "🟡"
+  if score < 0:     return "🟠"
+  return "⚪"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 14 — CLAUDE AI RESEARCH SYSTEM PROMPT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Use this exact system prompt when calling Claude for watchlist research:
+
+"You are the Glass Box Intelligence Engine for Absolute Dollar Terminal — a proprietary trading system powered by ADSA v8. You speak in the exact voice of the agent: precise, clinical, structured. No fluff.
+
+You know: SMC (BOS/CHoCH/Order Blocks/FVG/liquidity sweeps/EQH-EQL/Premium-Discount zones), the Fractal 4-Layer Protocol (Sovereign=Daily/Anchor=H1/Filter=M15/Exec=current TF), the Claw Liquidity Trail (ratcheting ATR trail around EMA, MTF: M5/M15/H1), the Confidence Engine (6 weighted factors: MTF trail 1.5x, RSI 1.0x, VWAP 1.0x, Fib 0.5x, VP 0.5x, SMC structure 1.0x), and the Platinum Risk Model (risk_per_trade=15, TP1=1:1, TP2=1.5:1, TP3=2:1).
+
+Rules you always follow:
+- abs(score) < 4: risk_verdict is STAND_ASIDE
+- Sovereign counter-trend: max_tp is always TP1_ONLY
+- ATR = Low: risk_verdict is CAUTION minimum  
+- 4-layer not fully aligned: note which layer is breaking
+
+Given a symbol and question, return a JSON object with these exact fields:
+{
+  enhanced_commentary: string (2-3 sentences in ADSA voice, reference the score/session/liquidity context),
+  risk_verdict: EXECUTE | CAUTION | STAND_ASIDE | COUNTER_TREND_ONLY,
+  risk_reason: string (cite the specific rule),
+  key_level: string (one price level that confirms or invalidates),
+  session_context: string (one sentence about session timing),
+  max_tp: TP1_ONLY | TP2 | TP3 | HOLDER_MODE,
+  confidence: number 0-100
+}
+
+Return ONLY the JSON object. No markdown, no preamble."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 15 — ENVIRONMENT VARIABLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Set these in Replit Secrets:
+  ANTHROPIC_API_KEY     — Claude API key
+  ADSA_SECRET           — shared secret for webhook validation
+  DATABASE_URL          — Replit PostgreSQL connection string (auto-set by Replit)
+  TRADESGNL_FORWARD_URL — optional: forward signals to TradeSgnl
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 16 — BUILD ORDER (FOLLOW EXACTLY)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step 1: Create project, install all dependencies, configure Tailwind with #0a0a14 background. Show me the running dev server with the dark background before proceeding.
+
+Step 2: Build the Express server with DB init + all 5 endpoints + SSE. Show me a test curl to /api/state returning the empty state JSON before proceeding.
+
+Step 3: Build the left panel AgentDashboard with this exact mock state:
+  total_score: -2, sovereign: BEAR, anchor: BEAR, filter: BEAR, exec: BULL
+  agent_sync_phase: "L4 PULLBACK — Wait for Exec Bear Flip"
+  session: "🗽 NY SESSION (23:xx EAT)", atr_state: "Med", atr_value: 2.74
+  pdh_pdl_status: "↔ Inside Range [PDH: 4257.33 | PDL: 4067.15]"
+  claw_dir_str: "🟡 PARTIAL BULL", claw_m5: up, claw_m15: up, claw_h1: down
+  confidence_str: "84% bull", claw_threshold: 60
+  layers: D{score:-3, regime:Short, vwap:Bear, fib:Bull, rsi:Bear}, H4{score:-2,regime:Short,vwap:Bear,fib:Bear,rsi:Neut}, H1{score:0,regime:Neut,vwap:Bear,fib:Bear,rsi:Bull}, M15{score:1,regime:Neut,vwap:Bear,fib:Bear,rsi:Bull}, M5{score:2,regime:Long,vwap:Bull,fib:Bear,rsi:Bull}
+  master_bias: "⏳ QUIET BEAR — WAIT"
+  ai_advice: "Cautious short — wait score < -6."
+  today: total_sigs:8, blocked:13, london_cnt:1, ny_cnt:6, tp1_hits:3, tp2_hits:3, tp3_hits:1, sl_hits:3, win_rate:37.5, profit_factor:1.81, net_pts:425.8
+  trade: active:false
+Show me the left panel rendered correctly before proceeding.
+
+Step 4: Build the Performance Table with matching mock data. Show me.
+
+Step 5: Build the right panel — SignalFeed and MessageFeed with mock data. Show me.
+
+Step 6: Build the Watchlist grid in the center bottom. Show me.
+
+Step 7: Add the TradingView chart iframe in center top. Show me.
+
+Step 8: Build the Settings panel. Show me.
+
+Step 9: Wire the useSSE hook connecting to /terminal/stream. Wire all SSE event types to update dashboard state, signal feed, and message feed in real time.
+
+Step 10: Deploy to Replit always-on. Show me the live URL.
+
+DO NOT skip steps. DO NOT proceed past any step without showing me the result. If something fails, fix it before moving on.
