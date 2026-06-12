@@ -1,0 +1,1343 @@
+//@version=6
+strategy("THE CLAW PROTOCOL - LIQUIDITY SUITE", shorttitle="CLAW", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100, max_bars_back=5000, pyramiding=10, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// =========================================================================
+// THE CLAW PROTOCOL — LIQUIDITY SUITE v1.0
+// =========================================================================
+// Architecture: TRIGGER → GATE → CONFLUENCE → CONFIDENCE → EXECUTION
+//
+// TRIGGER:    ATM Bot (UT Bot) provides timing — the "when"
+// GATE:       Liquidity Trail direction must confirm — the "which way"
+// CONFLUENCE: MTF + Structure + RSI + VWAP + Fib + VP → Confidence Score
+// CONFIDENCE: Score must exceed threshold (Claw Mode determines threshold)
+// EXECUTION:  Only signals passing ALL layers are executed
+//
+// The Liquidity Trail is TRUTH (direction), not a trigger (timing).
+// The ATM Bot is TIMING (trigger), not direction.
+// Confluence builds CONFIDENCE, which gates execution.
+// =========================================================================
+
+// =========================================================================
+// STEP 1: INPUTS
+// =========================================================================
+const string g_mtf  = "1. MTF Trail"
+const string g_ltf  = "2. Liquidity Trail & Zones"
+const string g_atm  = "3. ATM Bot (Trigger)"
+const string g_smc  = "4. Market Structure"
+const string g_rsi  = "5. RSI Momentum"
+const string g_vwap = "6. VWAP & Fib Regime"
+const string g_vp   = "7. Volume Profile"
+const string g_conf = "8. Confidence Engine"
+const string g_vis  = "9. Visual & Longevity"
+const string g_dash = "10. Cognitive Dashboard"
+
+// --- 1. MTF Trail ---
+ma_len    = input.int(200, "MA Length", minval=1, maxval=500, group=g_mtf)
+atr_len   = input.int(14, "ATR Length", minval=1, maxval=100, group=g_mtf)
+atr_mult  = input.float(1.25, "Trail Distance (ATR)", minval=0.5, maxval=8.0, step=0.25, group=g_mtf)
+
+// --- 2. Liquidity Trail & Zones (CONFLUENCE — NOT a trigger) ---
+swing_len      = input.int(14, "Swing Lookback", minval=2, maxval=30, group=g_ltf)
+show_zones     = input.bool(false, "Show Liquidity Zones", group=g_ltf)
+max_zones      = input.int(3, "Max Zones", minval=1, maxval=12, group=g_ltf)
+extend_bars    = input.int(50, "Extend Bars", minval=10, maxval=300, group=g_ltf)
+zone_atr_mult  = input.float(0.35, "Zone Thickness (ATR)", minval=0.05, maxval=2.0, step=0.05, group=g_ltf)
+keep_broken    = input.bool(true, "Keep Broken Zones", group=g_ltf)
+broken_opacity = input.int(88, "Broken Zone Fade", minval=0, maxval=100, group=g_ltf)
+
+// --- 3. ATM Bot (TRIGGER ENGINE) ---
+a_buy  = input.float(3.5, "Buy Sensitivity", minval=0, group=g_atm)
+c_buy  = input.int(2, "Buy ATR Period", minval=0, group=g_atm)
+a_sell = input.float(3.5, "Sell Sensitivity", minval=0, group=g_atm)
+c_sell = input.int(2, "Sell ATR Period", minval=0, group=g_atm)
+
+// --- 4. Market Structure (SMC) ---
+swingSize       = input.int(15, "Swing Size", minval=2, maxval=50, group=g_smc)
+bosConfType     = input.string("Candle Close", "BOS Confirmation", options=["Candle Close", "Wick"], group=g_smc)
+showStructLabels = input.bool(true, "Show Structure Labels", group=g_smc)
+showBOSlines    = input.bool(true, "Show BOS Lines", group=g_smc)
+
+// --- 5. RSI Momentum (ENHANCED with M5 confirm + sustain) ---
+rsiLen          = input.int(14, "RSI Length", minval=1, maxval=50, group=g_rsi)
+rsi_ema_len     = input.int(5, "Momentum EMA Length", minval=1, maxval=50, group=g_rsi)
+pmom            = input.int(50, "Positive Above", minval=20, maxval=80, group=g_rsi)
+nmom            = input.int(50, "Negative Below", minval=20, maxval=80, group=g_rsi)
+sustain_momentum = input.bool(true, "Sustain Momentum", group=g_rsi)
+use_m5_confirm  = input.bool(true, "M5 RSI Confirmation", group=g_rsi)
+showRSIlabels   = input.bool(true, "Show RSI Labels", group=g_rsi)
+
+// --- 6. VWAP & Fib Regime ---
+enableRegimeFilter = input.bool(true, "🔒 Enable Regime Filter", group=g_vwap)
+requireVWAP     = input.bool(false, "Require VWAP Confirmation", group=g_vwap)
+requireFibTrend = input.bool(false, "🔒 Require Fib Trend Confirmation", group=g_vwap)
+prd             = input.int(100, "Swing Period", minval=2, group=g_vwap)
+baseAPT         = input.float(20, "Adaptive Tracking", minval=1, step=1, group=g_vwap)
+useAdapt        = input.bool(false, "Adapt by ATR", group=g_vwap)
+volBias_vwap    = input.float(10.0, "Volatility Bias", minval=0.1, step=0.1, group=g_vwap)
+S_vwap          = input.color(color.lime, "Uptrend Color", group=g_vwap)
+R_vwap          = input.color(color.red, "Downtrend Color", group=g_vwap)
+xx_vwap         = input.int(2, "Line Width", minval=1, group=g_vwap)
+filleshow       = input.bool(false, "Show RSI Background", group=g_vwap)
+src_fib         = input.source(hlc3, "Fib Source", group=g_vwap)
+len_fib         = input.int(200, "Fib Length", minval=1, group=g_vwap)
+atrLen_fib      = input.int(14, "Fib ATR Length", minval=1, group=g_vwap)
+useATR_fib      = input.bool(true, "Fib Use ATR", group=g_vwap)
+
+// --- 7. Volume Profile ---
+vpEnabled     = input.bool(true, "Enable Volume Profile", group=g_vp)
+vpSessionType = input.string('Daily', 'Session Type', options=['Tokyo', 'London', 'New York', 'Daily', 'Weekly', 'Monthly', 'Quarterly', 'Yearly'], group=g_vp)
+vpResolution  = input.int(30, 'Resolution', minval=5, group=g_vp)
+vpVAwidth     = input.int(70, 'Value Area Volume %', minval=1, maxval=100, group=g_vp)
+vpDisplayMode = input.string('Mode 2', 'Bar Mode', ['Mode 1', 'Mode 2', 'Mode 3'], group=g_vp)
+vpVolType     = input.string('Volume', 'Profile Data Type', options=['Volume', 'Open Interest'], group=g_vp)
+vpSmoothVol   = input.bool(false, 'Smooth Volume Data', group=g_vp)
+vpShowProfile = input.bool(true, 'Show Volume Profile', inline="vp1", group=g_vp)
+vpShowPOC     = input.bool(true, 'Show POC', inline="vp1", group=g_vp)
+vpShowVA      = input.bool(true, 'Show VAH/VAL', inline="vp2", group=g_vp)
+vpShowVAbox   = input.bool(false, 'Show Value Area Box', inline="vp2", group=g_vp)
+vpShowCurrent = input.bool(true, 'Show Live Zone', group=g_vp)
+vpShowLabels  = input.bool(true, 'Show Session Labels', group=g_vp)
+vpBullCol     = input.color(color.rgb(76, 175, 79, 50), 'Up Volume', group=g_vp)
+vpBearCol     = input.color(color.rgb(255, 82, 82, 50), 'Down Volume', group=g_vp)
+vpVAboxCol    = input.color(color.rgb(107, 159, 255, 90), 'Value Area Box', group=g_vp)
+vpPOCcolor    = input.color(color.red, 'POC Color', inline="vpc1", group=g_vp)
+vpPOCwidth    = input.int(1, 'POC Width', inline="vpc1", group=g_vp)
+vpVAHcolor    = input.color(color.aqua, 'VAH Color', inline="vpc2", group=g_vp)
+vpVAHwidth    = input.int(1, 'VAH Width', inline="vpc2", group=g_vp)
+vpVALcolor    = input.color(color.aqua, 'VAL Color', inline="vpc3", group=g_vp)
+vpVALwidth    = input.int(1, 'VAL Width', inline="vpc3", group=g_vp)
+
+// --- 8. Confidence Engine ---
+claw_mode       = input.string("Moderate", "Claw Mode", options=["Conservative", "Moderate", "Aggressive", "Custom"], group=g_conf, tooltip="Conservative=80%, Moderate=60%, Aggressive=40%, Custom=your threshold")
+custom_threshold = input.int(60, "Custom Threshold %", minval=0, maxval=100, group=g_conf)
+mtf_weight      = input.float(1.5, "MTF Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+struct_weight   = input.float(1.0, "Structure Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+rsi_weight      = input.float(1.0, "RSI Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+vwap_weight     = input.float(1.0, "VWAP Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+fib_weight      = input.float(0.5, "Fib Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+vp_weight       = input.float(0.5, "Volume Profile Weight", minval=0, maxval=3.0, step=0.25, group=g_conf)
+
+// --- 9. Visual & Longevity ---
+signal_length   = input.int(34, "Signal Smoothing", minval=1, maxval=200, group=g_vis)
+sma_signal      = input.bool(true, "Simple MA Signal", group=g_vis)
+lin_reg         = input.bool(false, "Use LinReg", group=g_vis)
+linreg_length   = input.int(11, "LinReg Length", minval=1, maxval=200, group=g_vis)
+showLongevity   = input.bool(false, "Show Longevity Zones", group=g_vis)
+len_z           = input.int(5, "Zone Length", group=g_vis)
+col_upper       = input.color(color.new(color.red, 75), "Upper Color", group=g_vis)
+col_lower       = input.color(color.new(color.green, 75), "Lower Color", group=g_vis)
+lab_pos         = input.string("LastBar", "Label Position", options=["Root", "LastBar"], group=g_vis)
+labelOffsetBars = input.int(10, "Label Offset", minval=10, maxval=500, group=g_vis)
+
+// --- 10. Cognitive Dashboard ---
+bull_color      = input.color(#00ff00, "Bull Color", group=g_dash)
+bear_color      = input.color(#ff0000, "Bear Color", group=g_dash)
+dashOn          = input.bool(true, "Show Dashboard", group=g_dash)
+dashColor       = input.color(color.new(#1e222d, 10), "Panel Background", group=g_dash)
+dashTextColor   = input.color(color.white, "Text Color", group=g_dash)
+panelPlacement  = input.string("Top-Right", "Placement", options=["Top-Right", "Top-Left", "Bottom-Right", "Bottom-Left", "Bottom-Center"], group=g_dash)
+
+// ===========================================================================
+// TradeSgnl Alert & Risk Configuration
+// ===========================================================================
+long_entry_message  = input.string('{"action": "buy", "symbol": "{{symbol}}", "sl": "{{sl}}", "tp": "{{tp}}", "risk": "{{risk}}", "trtrig": "{{trtrig}}", "trdist": "{{trdist}}"}', "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Signal sent when a long position is opened")
+long_exit_message   = input.string('{"action": "close_buy", "symbol": "{{symbol}}"}', "Long Exit Message",   group="TradeSgnl Alert Messages", tooltip="Signal sent when a long position is closed (or full SL/TP)")
+short_entry_message = input.string('{"action": "sell", "symbol": "{{symbol}}", "sl": "{{sl}}", "tp": "{{tp}}", "risk": "{{risk}}", "trtrig": "{{trtrig}}", "trdist": "{{trdist}}"}', "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Signal sent when a short position is opened")
+short_exit_message  = input.string('{"action": "close_sell", "symbol": "{{symbol}}"}', "Short Exit Message",  group="TradeSgnl Alert Messages", tooltip="Signal sent when a short position is closed (or full SL/TP)")
+
+initial_risk_usd    = input.float(15.0, "Initial Dollar Risk ($)", group="TradeSgnl Configuration", tooltip="Risk per setup in dollars")
+scale_in_risk_usd   = input.float(7.5, "Scale-In Dollar Risk ($)", group="TradeSgnl Configuration", tooltip="Reduced risk for automated pyramiding scale-ins")
+rr_ratio            = input.float(2.0, "Risk-to-Reward Ratio", minval=0.1, group="TradeSgnl Configuration", tooltip="Take profit distance as a multiple of risk distance")
+max_scale_ins       = input.int(3, "Max Scale-In Levels", minval=1, maxval=5, group="TradeSgnl Configuration", tooltip="Strict limit for automated scale-ins")
+
+// =========================================================================
+// STEP 2: VOLUME PROFILE ENGINE (ISOLATED)
+// =========================================================================
+var int vp_zoneStart = 0
+int vp_lookback = bar_index - vp_zoneStart
+var bool vp_activeZone = false
+var vp_vpGreen = array.new_float(vpResolution, 0)
+var vp_vpRed = array.new_float(vpResolution, 0)
+var vp_zoneBounds = array.new_float(vpResolution, 0)
+var float[] vp_ltfOpen = array.new_float(0)
+var float[] vp_ltfClose = array.new_float(0)
+var float[] vp_ltfHigh = array.new_float(0)
+var float[] vp_ltfLow = array.new_float(0)
+var float[] vp_ltfVolume = array.new_float(0)
+
+string userSymbol = syminfo.prefix + ":" + syminfo.ticker
+string openInterestTicker = str.format("{0}_OI", userSymbol)
+string timeframe_oi = syminfo.type == "futures" and timeframe.isintraday ? "1D" : timeframe.period
+deltaOi = request.security(openInterestTicker, timeframe_oi, close - close[1], ignore_invalid_symbol=true)
+
+vp_vol() =>
+    out = vpSmoothVol ? ta.ema(volume, 5) : volume
+    if vpVolType == 'Open Interest'
+        out := deltaOi
+    out
+
+[vp_dO, vp_dC, vp_dH, vp_dL, vp_dV] = request.security_lower_tf(syminfo.tickerid, '', [open, close, high, low, vp_vol()])
+
+vp_resetProfile(bool enable) =>
+    if enable
+        array.fill(vp_vpGreen, 0)
+        array.fill(vp_vpRed, 0)
+        array.clear(vp_ltfOpen)
+        array.clear(vp_ltfHigh)
+        array.clear(vp_ltfLow)
+        array.clear(vp_ltfClose)
+        array.clear(vp_ltfVolume)
+
+vp_profHigh = ta.highest(high, vp_lookback + 1)[1]
+vp_profLow  = ta.lowest(low, vp_lookback + 1)[1]
+
+vp_get_vol(float y11, float y12, float y21, float y22, float height, float vol) =>
+    nz(math.max(math.min(math.max(y11, y12), math.max(y21, y22)) - math.max(math.min(y11, y12), math.min(y21, y22)), 0) * vol / height)
+
+vp_profileAdd(float o, float h, float l, float c, float v, float g) =>
+    for i = 0 to array.size(vp_vpGreen) - 1
+        zoneTop = array.get(vp_zoneBounds, i)
+        zoneBot = zoneTop - g
+        body_top = math.max(c, o)
+        body_bot = math.min(c, o)
+        itsgreen = c >= o
+        topwick = h - body_top
+        bottomwick = body_bot - l
+        body = body_top - body_bot
+        bodyvol = body * v / (2 * topwick + 2 * bottomwick + body)
+        topwickvol = 2 * topwick * v / (2 * topwick + 2 * bottomwick + body)
+        bottomwickvol = 2 * bottomwick * v / (2 * topwick + 2 * bottomwick + body)
+        if vpVolType == 'Volume'
+            array.set(vp_vpGreen, i, array.get(vp_vpGreen, i) + (itsgreen ? vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, bodyvol) : 0) + vp_get_vol(zoneBot, zoneTop, body_top, h, topwick, topwickvol) / 2 + vp_get_vol(zoneBot, zoneTop, body_bot, l, bottomwick, bottomwickvol) / 2)
+            array.set(vp_vpRed, i, array.get(vp_vpRed, i) + (itsgreen ? 0 : vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, bodyvol)) + vp_get_vol(zoneBot, zoneTop, body_top, h, topwick, topwickvol) / 2 + vp_get_vol(zoneBot, zoneTop, body_bot, l, bottomwick, bottomwickvol) / 2)
+        else if vpVolType == 'Open Interest'
+            if v > 0
+                array.set(vp_vpGreen, i, array.get(vp_vpGreen, i) + vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, v))
+            if v < 0
+                array.set(vp_vpRed, i, array.get(vp_vpRed, i) + vp_get_vol(zoneBot, zoneTop, body_bot, body_top, body, -v))
+
+vp_calcSession(bool update) =>
+    array.fill(vp_vpGreen, 0)
+    array.fill(vp_vpRed, 0)
+    if bar_index > vp_lookback and update
+        gap = (vp_profHigh - vp_profLow) / vpResolution
+        for i = 0 to vpResolution - 1
+            array.set(vp_zoneBounds, i, vp_profHigh - gap * i)
+        if array.size(vp_ltfOpen) > 0
+            for j = 0 to array.size(vp_ltfOpen) - 1
+                vp_profileAdd(array.get(vp_ltfOpen, j), array.get(vp_ltfHigh, j), array.get(vp_ltfLow, j), array.get(vp_ltfClose, j), array.get(vp_ltfVolume, j), gap)
+
+vp_pocLevel() =>
+    float maxVol = 0
+    int levelInd = 0
+    for i = 0 to array.size(vp_vpRed) - 1
+        if array.get(vp_vpRed, i) + array.get(vp_vpGreen, i) > maxVol
+            maxVol := array.get(vp_vpRed, i) + array.get(vp_vpGreen, i)
+            levelInd := i
+    float outLevel = na
+    if levelInd != array.size(vp_vpRed) - 1
+        outLevel := array.get(vp_zoneBounds, levelInd) - (array.get(vp_zoneBounds, levelInd) - array.get(vp_zoneBounds, levelInd + 1)) / 2
+    outLevel
+
+vp_valueLevels(float poc) =>
+    float gap = (vp_profHigh - vp_profLow) / vpResolution
+    float volSum = array.sum(vp_vpRed) + array.sum(vp_vpGreen)
+    float volCnt = 0
+    float vah = vp_profHigh
+    float val = vp_profLow
+    int pocInd = 0
+    for i = 0 to array.size(vp_zoneBounds) - 2
+        if array.get(vp_zoneBounds, i) >= poc and array.get(vp_zoneBounds, i + 1) < poc
+            pocInd := i
+    volCnt += array.get(vp_vpRed, pocInd) + array.get(vp_vpGreen, pocInd)
+    for i = 1 to array.size(vp_vpRed)
+        if pocInd + i >= 0 and pocInd + i < array.size(vp_vpRed)
+            volCnt += array.get(vp_vpRed, pocInd + i) + array.get(vp_vpGreen, pocInd + i)
+            if volCnt >= volSum * (vpVAwidth / 100)
+                break
+            else
+                val := array.get(vp_zoneBounds, pocInd + i) - gap
+        if pocInd - i >= 0 and pocInd - i < array.size(vp_vpRed)
+            volCnt += array.get(vp_vpRed, pocInd - i) + array.get(vp_vpGreen, pocInd - i)
+            if volCnt >= volSum * (vpVAwidth / 100)
+                break
+            else
+                vah := array.get(vp_zoneBounds, pocInd - i)
+    result = array.new<float>(2)
+    array.set(result, 0, val)
+    array.set(result, 1, vah)
+    result
+
+vp_drawNewZone(bool update) =>
+    if bar_index > vp_lookback and update and array.sum(vp_vpGreen) + array.sum(vp_vpRed) > 0 and vpEnabled
+        gap = (vp_profHigh - vp_profLow) / vpResolution
+        float leftMax = bar_index[vp_lookback]
+        float rightMax = bar_index[int(vp_lookback / 1.4)]
+        float rightMaxVol = array.max(vp_vpGreen) + array.max(vp_vpRed)
+        float buffer = gap / 10
+        if vpShowLabels
+            label.new((bar_index - 1 + int(leftMax)) / 2, vp_profHigh, vpSessionType, color=color.rgb(0, 0, 0, 100), textcolor=chart.fg_color)
+        if vpShowProfile
+            for i = 0 to array.size(vp_vpRed) - 1
+                greenEnd = int(leftMax + (rightMax - leftMax) * (array.get(vp_vpGreen, i) / rightMaxVol))
+                redEnd = int(greenEnd + (rightMax - leftMax) * (array.get(vp_vpRed, i) / rightMaxVol))
+                if vpDisplayMode == 'Mode 2'
+                    box.new(int(leftMax), array.get(vp_zoneBounds, i) - buffer, greenEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                    box.new(greenEnd, array.get(vp_zoneBounds, i) - buffer, redEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBearCol, border_width=0)
+                else if vpDisplayMode == 'Mode 1'
+                    box.new(int(leftMax), array.get(vp_zoneBounds, i) - buffer, greenEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                else
+                    box.new(int(leftMax), array.get(vp_zoneBounds, i) - buffer, greenEnd, array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBullCol, border_width=0)
+                    box.new(int(leftMax) - redEnd + greenEnd, array.get(vp_zoneBounds, i) - buffer, int(leftMax), array.get(vp_zoneBounds, i) - gap + buffer, bgcolor=vpBearCol, border_width=0)
+        poc = vp_pocLevel()
+        vaLevels = vp_valueLevels(poc)
+        val = array.get(vaLevels, 0)
+        vah = array.get(vaLevels, 1)
+        if vpShowPOC
+            line.new(int(leftMax), poc, bar_index - 1, poc, color=vpPOCcolor, width=vpPOCwidth)
+        if vpShowVA
+            line.new(int(leftMax), vah, bar_index - 1, vah, color=vpVAHcolor, width=vpVAHwidth)
+            line.new(int(leftMax), val, bar_index - 1, val, color=vpVALcolor, width=vpVALwidth)
+        if vpShowVAbox
+            box.new(int(leftMax), vah, bar_index - 1, val, border_color=color.rgb(54, 58, 69, 100), bgcolor=vpVAboxCol)
+
+vp_updateIntra(array<float> o, array<float> h, array<float> l, array<float> c, array<float> v) =>
+    if array.size(o) > 0
+        for i = 0 to array.size(o) - 1
+            array.push(vp_ltfOpen, array.get(o, i))
+            array.push(vp_ltfHigh, array.get(h, i))
+            array.push(vp_ltfLow, array.get(l, i))
+            array.push(vp_ltfClose, array.get(c, i))
+            array.push(vp_ltfVolume, array.get(v, i))
+
+vp_utcHour = hour(time(timeframe.period, '0000-2400', 'GMT'), 'GMT')
+vp_newDaily = dayofweek != dayofweek[1]
+vp_newWeekly = weekofyear != weekofyear[1]
+vp_newMonthly = dayofmonth != dayofmonth[1] + 1 and dayofmonth != dayofmonth[1]
+vp_newYearly = year != year[1]
+vp_newQuarterly = month != month[1] and (month - 1) % 3 == 0
+vp_newSession = switch vpSessionType
+    'Tokyo'    => vp_utcHour != vp_utcHour[1] + 1 and vp_utcHour != vp_utcHour[1]
+    'London'   => vp_utcHour >= 7 and vp_utcHour[1] < 7
+    'New York' => vp_utcHour >= 13 and vp_utcHour[1] < 13
+    'Daily'    => vp_newDaily
+    'Weekly'   => vp_newWeekly
+    'Monthly'  => vp_newMonthly
+    'Yearly'   => vp_newYearly
+    'Quarterly'=> vp_newQuarterly
+    => vp_newDaily
+vp_zoneEnd = switch vpSessionType
+    'Tokyo'    => vp_utcHour >= 9 and vp_utcHour[1] < 9
+    'London'   => vp_utcHour >= 16 and vp_utcHour[1] < 16
+    'New York' => vp_utcHour >= 22 and vp_utcHour[1] < 22
+    'Daily'    => vp_newDaily
+    'Weekly'   => vp_newWeekly
+    'Monthly'  => vp_newMonthly
+    'Yearly'   => vp_newYearly
+    'Quarterly'=> vp_newQuarterly
+    => vp_newDaily
+
+if vpEnabled
+    vp_calcSession(vp_zoneEnd or (barstate.islast and vpShowCurrent))
+    vp_drawNewZone(vp_zoneEnd)
+    vp_resetProfile(vp_newSession)
+    vp_updateIntra(vp_dO, vp_dH, vp_dL, vp_dC, vp_dV)
+    if vp_zoneEnd
+        vp_activeZone := false
+    if vp_newSession
+        vp_zoneStart := bar_index
+        vp_activeZone := true
+
+vp_currentPOC = vpEnabled ? vp_pocLevel() : na
+vp_vaLevels   = vpEnabled and not na(vp_currentPOC) ? vp_valueLevels(vp_currentPOC) : array.new<float>(2, na)
+vp_currentVAL = array.get(vp_vaLevels, 0)
+vp_currentVAH = array.get(vp_vaLevels, 1)
+vp_strength   = vpEnabled and not na(vp_currentPOC) ? (close > vp_currentVAH ? "🟢 ABOVE VAH" : close < vp_currentVAL ? "🔴 BELOW VAL" : "🟡 IN VALUE") : "—"
+bool vp_bullish_conf = vpEnabled and not na(vp_currentVAL) and close > vp_currentVAL
+bool vp_bearish_conf = vpEnabled and not na(vp_currentVAH) and close < vp_currentVAH
+
+// =========================================================================
+// STEP 3: MTF TRAIL ENGINE
+// =========================================================================
+calcLiqTrail(mlen, alen, amult) =>
+    float t_atr = ta.atr(alen)
+    float t_ma  = ta.ema(close, mlen)
+    float raw_up = t_ma - t_atr * amult
+    float raw_dn = t_ma + t_atr * amult
+    int t_trend = 1
+    float t_trail = na
+    if barstate.isfirst
+        t_trend := close > t_ma ? 1 : -1
+        t_trail := close > t_ma ? raw_up : raw_dn
+    else
+        int prev_trend = nz(t_trend[1], 1)
+        float prev_trail = nz(t_trail[1], close)
+        if prev_trend == 1
+            t_trail := math.max(raw_up, prev_trail)
+            t_trend := close < t_trail ? -1 : 1
+            if close < t_trail
+                t_trail := raw_dn
+        else
+            t_trail := math.min(raw_dn, prev_trail)
+            t_trend := close > t_trail ? 1 : -1
+            if close > t_trail
+                t_trail := raw_up
+    [t_trend, t_trail]
+
+[ltf_trend, ltf_trail] = calcLiqTrail(ma_len, atr_len, atr_mult)
+[m15_trend, m15_trail] = request.security(syminfo.tickerid, "15", calcLiqTrail(ma_len, atr_len, atr_mult))
+[h1_trend,  h1_trail]  = request.security(syminfo.tickerid, "60", calcLiqTrail(ma_len, atr_len, atr_mult))
+[m5_trend,  m5_trail]  = request.security(syminfo.tickerid, "5",  calcLiqTrail(ma_len, atr_len, atr_mult))
+
+mtf_bullish = m15_trend == 1 and h1_trend == 1
+mtf_bearish = m15_trend == -1 and h1_trend == -1
+
+// =========================================================================
+// STEP 4: MARKET STRUCTURE (SMC)
+// =========================================================================
+pivHi = ta.pivothigh(high, swingSize, swingSize)
+pivLo = ta.pivotlow(low,   swingSize, swingSize)
+
+var float prevHigh      = na
+var float prevLow       = na
+var int   prevHighIndex = na
+var int   prevLowIndex  = na
+var bool  highActive    = false
+var bool  lowActive     = false
+var int   structBias    = 0
+
+bool hh = false
+bool lh = false
+bool hl = false
+bool ll = false
+
+if not na(pivHi)
+    if na(prevHigh) or pivHi >= prevHigh
+        hh := true
+        structBias := 1
+    else
+        lh := true
+        structBias := -1
+    prevHigh := pivHi
+    highActive := true
+    prevHighIndex := bar_index - swingSize
+
+if not na(pivLo)
+    if na(prevLow) or pivLo >= prevLow
+        hl := true
+        if structBias != -1
+            structBias := 1
+    else
+        ll := true
+        structBias := -1
+    prevLow := pivLo
+    lowActive := true
+    prevLowIndex := bar_index - swingSize
+
+bool highBroken = false
+bool lowBroken  = false
+float highSrc = bosConfType == 'Candle Close' ? close : high
+float lowSrc  = bosConfType == 'Candle Close' ? close : low
+
+if highSrc > prevHigh and highActive
+    highBroken := true
+    highActive := false
+if lowSrc < prevLow and lowActive
+    lowBroken := true
+    lowActive := false
+
+bool bullBOS = highBroken and structBias == 1
+bool bearBOS = lowBroken  and structBias == -1
+
+if showStructLabels
+    if hh
+        label.new(bar_index - swingSize, pivHi, "HH", style=label.style_label_down, color=color.new(bull_color, 30), textcolor=color.white, size=size.tiny)
+    if lh
+        label.new(bar_index - swingSize, pivHi, "LH", style=label.style_label_down, color=color.new(bear_color, 30), textcolor=color.white, size=size.tiny)
+    if hl
+        label.new(bar_index - swingSize, pivLo, "HL", style=label.style_label_up, color=color.new(bull_color, 30), textcolor=color.white, size=size.tiny)
+    if ll
+        label.new(bar_index - swingSize, pivLo, "LL", style=label.style_label_up, color=color.new(bear_color, 30), textcolor=color.white, size=size.tiny)
+
+if showBOSlines
+    if bullBOS and not na(prevHighIndex) and not na(prevHigh)
+        line.new(prevHighIndex, prevHigh, bar_index, prevHigh, color=color.new(bull_color, 20), width=2, style=line.style_solid)
+    if bearBOS and not na(prevLowIndex) and not na(prevLow)
+        line.new(prevLowIndex, prevLow, bar_index, prevLow, color=color.new(bear_color, 20), width=2, style=line.style_solid)
+
+string structLabel = structBias == 1 ? "BULL" : structBias == -1 ? "BEAR" : "NEUT"
+
+// =========================================================================
+// STEP 5: LIQUIDITY ZONES (confluence only — trail flip is NOT a trigger)
+// =========================================================================
+float atr_zone = ta.atr(atr_len)
+float ph = ta.pivothigh(high, swing_len, swing_len)
+float pl = ta.pivotlow(low,   swing_len, swing_len)
+
+color trend_col = ltf_trend == 1 ? bull_color : bear_color
+
+type LiquidityZone
+    float top
+    float bot
+    float price
+    bool  is_high
+    bool  broken
+    bool  retested
+    int   born_bar
+    int   break_bar
+    box   bx
+    label lb
+
+var LiquidityZone[] zones = array.new<LiquidityZone>()
+
+zone_fill_color(bool is_h, bool is_brkn) =>
+    is_brkn ? color.new(is_h ? bear_color : bull_color, broken_opacity) : color.new(is_h ? bear_color : bull_color, 84)
+
+zone_border_color(bool is_h, bool is_brkn) =>
+    is_brkn ? color.new(is_h ? bear_color : bull_color, 35) : color.new(is_h ? bear_color : bull_color, 20)
+
+zone_label_text(bool is_h, bool is_brkn, float p) =>
+    (is_h ? "H-LIQ" : "L-LIQ") + (is_brkn ? " • Broken" : "") + "  " + str.tostring(p, "#.##")
+
+delete_zone(LiquidityZone z) =>
+    box.delete(z.bx)
+    label.delete(z.lb)
+
+add_zone(float p, bool is_h) =>
+    float pad = math.max(atr_zone * zone_atr_mult, syminfo.mintick)
+    float t = is_h ? p : p + pad
+    float b = is_h ? p - pad : p
+    if zones.size() >= max_zones
+        delete_zone(zones.shift())
+    box bx = box.new(bar_index - swing_len, t, bar_index + extend_bars, b, bgcolor=zone_fill_color(is_h, false), border_color=zone_border_color(is_h, false), border_width=1)
+    label lb = label.new(bar_index + extend_bars, p, zone_label_text(is_h, false, p), color=color.new(color.black, 100), textcolor=is_h ? bear_color : bull_color, style=label.style_label_left, size=size.small)
+    zones.push(LiquidityZone.new(t, b, p, is_h, false, false, bar_index - swing_len, na, bx, lb))
+
+if show_zones
+    if not na(ph)
+        add_zone(ph, true)
+    if not na(pl)
+        add_zone(pl, false)
+
+var bool bull_break_signal  = false
+var bool bear_break_signal  = false
+var bool bull_retest_signal = false
+var bool bear_retest_signal = false
+bull_break_signal  := false
+bear_break_signal  := false
+bull_retest_signal := false
+bear_retest_signal := false
+
+if zones.size() > 0
+    int i = zones.size() - 1
+    while i >= 0
+        LiquidityZone z = zones.get(i)
+        z.bx.set_right(bar_index + extend_bars)
+        z.lb.set_x(bar_index + extend_bars)
+        z.lb.set_y(z.price)
+        if not z.broken
+            bool bull_brk = z.is_high and close > z.top
+            bool bear_brk = not z.is_high and close < z.bot
+            if bull_brk or bear_brk
+                z.broken := true
+                z.break_bar := bar_index
+                z.bx.set_bgcolor(zone_fill_color(z.is_high, true))
+                z.bx.set_border_color(zone_border_color(z.is_high, true))
+                z.lb.set_text(zone_label_text(z.is_high, true, z.price))
+                if bull_brk
+                    bull_break_signal := true
+                if bear_brk
+                    bear_break_signal := true
+        if z.broken and not z.retested and not na(z.break_bar)
+            bool b_ret = z.is_high and low <= z.top and high >= z.bot and close >= z.top
+            bool s_ret = not z.is_high and high >= z.bot and low <= z.top and close <= z.bot
+            if b_ret
+                z.retested := true
+                bull_retest_signal := true
+                z.lb.set_text("H-LIQ • Retested  " + str.tostring(z.price, "#.##"))
+                z.bx.set_border_width(2)
+            if s_ret
+                z.retested := true
+                bear_retest_signal := true
+                z.lb.set_text("L-LIQ • Retested  " + str.tostring(z.price, "#.##"))
+                z.bx.set_border_width(2)
+        if z.broken and not keep_broken
+            delete_zone(z)
+            zones.remove(i)
+        else
+            zones.set(i, z)
+        i -= 1
+
+bool zone_bull_confl = bull_break_signal or bull_retest_signal
+bool zone_bear_confl = bear_break_signal or bear_retest_signal
+
+// =========================================================================
+// STEP 6: ATM BOT (TRIGGER ENGINE)
+// =========================================================================
+buyEnabled  = c_buy > 0 and a_buy > 0
+sellEnabled = c_sell > 0 and a_sell > 0
+
+src_buy   = close
+ema_buy   = ta.ema(src_buy, 1)
+atr_buy   = buyEnabled ? ta.atr(c_buy) : na
+nLoss_buy = buyEnabled ? a_buy * atr_buy : na
+var float trail_buy = na
+if buyEnabled
+    if na(trail_buy[1])
+        trail_buy := src_buy - nLoss_buy
+    else
+        if src_buy > trail_buy[1] and src_buy[1] > trail_buy[1]
+            trail_buy := math.max(trail_buy[1], src_buy - nLoss_buy)
+        else if src_buy < trail_buy[1] and src_buy[1] < trail_buy[1]
+            trail_buy := math.min(trail_buy[1], src_buy + nLoss_buy)
+        else
+            trail_buy := src_buy > trail_buy[1] ? src_buy - nLoss_buy : src_buy + nLoss_buy
+else
+    trail_buy := na
+
+src_sell   = close
+ema_sell   = ta.ema(src_sell, 1)
+atr_sell   = sellEnabled ? ta.atr(c_sell) : na
+nLoss_sell = sellEnabled ? a_sell * atr_sell : na
+var float trail_sell = na
+if sellEnabled
+    if na(trail_sell[1])
+        trail_sell := src_sell + nLoss_sell
+    else
+        if src_sell > trail_sell[1] and src_sell[1] > trail_sell[1]
+            trail_sell := math.max(trail_sell[1], src_sell - nLoss_sell)
+        else if src_sell < trail_sell[1] and src_sell[1] < trail_sell[1]
+            trail_sell := math.min(trail_sell[1], src_sell + nLoss_sell)
+        else
+            trail_sell := src_sell > trail_sell[1] ? src_sell - nLoss_sell : src_sell + nLoss_sell
+else
+    trail_sell := na
+
+above_buy_cross  = ta.crossover(ema_buy, trail_buy)
+below_sell_cross = ta.crossover(trail_sell, ema_sell)
+ut_buy_signal    = buyEnabled and src_buy > trail_buy and above_buy_cross and barstate.isconfirmed
+ut_sell_signal   = sellEnabled and src_sell < trail_sell and below_sell_cross and barstate.isconfirmed
+
+// =========================================================================
+// STEP 7: ENHANCED RSI MOMENTUM (with M5 confirm + sustain)
+// =========================================================================
+rsi = ta.rsi(close, rsiLen)
+ema5_close  = ta.ema(close, rsi_ema_len)
+change_ema5 = ta.change(ema5_close)
+p_mom       = rsi[1] < pmom and rsi > pmom and rsi > nmom and change_ema5 > 0
+n_mom       = rsi < nmom and change_ema5 < 0
+
+var bool positive = false
+var bool negative = false
+
+p_sustain = sustain_momentum and positive[1] and rsi > pmom and change_ema5 > 0
+n_sustain = sustain_momentum and negative[1] and rsi < nmom and change_ema5 < 0
+
+if p_mom or p_sustain
+    positive := true
+    negative := false
+if n_mom or n_sustain
+    positive := false
+    negative := true
+
+rsi_m5      = request.security(syminfo.tickerid, "5", ta.rsi(close, rsiLen))
+ema_m5      = request.security(syminfo.tickerid, "5", ta.ema(close, rsi_ema_len))
+m5_bull_mom = ta.change(ema_m5) > 0
+m5_bear_mom = ta.change(ema_m5) < 0
+
+p_mom_m5 = rsi_m5[1] < pmom and rsi_m5 > pmom and rsi_m5 > nmom and m5_bull_mom
+n_mom_m5 = rsi_m5 < nmom and m5_bear_mom
+
+var bool positive_m5 = false
+var bool negative_m5 = false
+if p_mom_m5
+    positive_m5 := true
+    negative_m5 := false
+if n_mom_m5
+    positive_m5 := false
+    negative_m5 := true
+
+pcondition  = positive and not positive[1] and (positive_m5 or (rsi_m5 > nmom and m5_bull_mom))
+ncondition2 = negative and not negative[1] and (negative_m5 or (rsi_m5 < pmom and m5_bear_mom))
+
+smartBull     = rsi > pmom and change_ema5 > 0 and (not use_m5_confirm or (rsi_m5 > pmom and m5_bull_mom))
+smartBear     = rsi < nmom and change_ema5 < 0 and (not use_m5_confirm or (rsi_m5 < nmom and m5_bear_mom))
+newSmartBull  = smartBull and not smartBull[1]
+newSmartBear  = smartBear and not smartBear[1]
+
+rsi_high_val = filleshow ? ta.ema(high, 5) : float(na)
+rsi_low_val  = filleshow ? ta.ema(low, 10) : float(na)
+a_rsi = plot(rsi_high_val, display=display.none)
+b_rsi = plot(rsi_low_val,  display=display.none)
+fill(a_rsi, b_rsi, color=positive ? color.new(color.green, 62) : color.new(color.red, 66))
+
+plotshape(showRSIlabels and pcondition,  title="RSI+",  style=shape.labelup,   color=color.new(color.green, 62), location=location.belowbar, size=size.tiny, text="Bull📈", textcolor=color.white)
+plotshape(showRSIlabels and ncondition2, title="RSI-",  style=shape.labeldown, color=color.new(color.red, 66),   location=location.abovebar, size=size.tiny, text="Bear📉", textcolor=color.white)
+
+// =========================================================================
+// STEP 8: VWAP ANCHOR
+// =========================================================================
+b = bar_index
+var float vw_ph = na
+var float vw_pl = na
+var int   vw_phL = b
+var int   vw_plL = b
+var int   lastSwing = 0
+vw_ph  := ta.highestbars(high, prd) == 0 ? high : vw_ph
+vw_pl  := ta.lowestbars(low, prd) == 0 ? low : vw_pl
+vw_phL := ta.highestbars(high, prd) == 0 ? b : vw_phL
+vw_plL := ta.lowestbars(low, prd) == 0 ? b : vw_plL
+dir_vwap = vw_phL > vw_plL ? 1 : -1
+atrLen_vwap = 50
+atr_vwap = ta.atr(atrLen_vwap)
+atrAvg   = ta.rma(atr_vwap, atrLen_vwap)
+ratio_vwap = atrAvg > 0 ? atr_vwap / atrAvg : 1.0
+aptRaw    = useAdapt ? baseAPT / math.pow(ratio_vwap, volBias_vwap) : baseAPT
+aptClamped = math.max(5.0, math.min(300.0, aptRaw))
+aptSeries = math.round(aptClamped)
+
+alphaFromAPT(apt) =>
+    decay = math.exp(-math.log(2.0) / math.max(1.0, apt))
+    1.0 - decay
+
+var float p_vwap = hlc3 * volume
+var float vol_vwap = volume
+type dataPoints
+    array<chart.point> points
+    polyline poly = na
+var vwap_data = dataPoints.new(array.new<chart.point>())
+
+if dir_vwap != dir_vwap[1]
+    x_vwap  = dir_vwap > 0 ? vw_plL : vw_phL
+    y_vwap  = dir_vwap > 0 ? vw_pl : vw_ph
+    loc_vwap = dir_vwap > 0 ? label.style_label_up : label.style_label_down
+    col_vwap = dir_vwap > 0 ? color.green : color.red
+    txt_vwap = dir_vwap > 0 ? "BULL" : "BEAR"
+    label.new(x_vwap, y_vwap, text=txt_vwap, style=loc_vwap, color=color.new(col_vwap, 0), textcolor=color.white, size=size.small)
+    lastSwing := dir_vwap > 0 ? 1 : -1
+    barsback = b - x_vwap
+    p_vwap   := y_vwap * volume[barsback]
+    vol_vwap := volume[barsback]
+    vwap_data.poly.delete()
+    polyline.new(vwap_data.points, false, false, line_color=dir_vwap < 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+    vwap_data.points.clear()
+    for i = barsback to 0 by 1
+        apt_i = aptSeries[i]
+        alpha = alphaFromAPT(apt_i)
+        pxv = hlc3[i] * volume[i]
+        v_i = volume[i]
+        p_vwap   := (1.0 - alpha) * p_vwap + alpha * pxv
+        vol_vwap := (1.0 - alpha) * vol_vwap + alpha * v_i
+        vappe = vol_vwap > 0 ? p_vwap / vol_vwap : na
+        vwap_data.points.push(chart.point.from_index(b - i, vappe))
+    vwap_data.poly := polyline.new(vwap_data.points, false, false, line_color=dir_vwap < 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+else
+    apt_0 = aptSeries
+    alpha = alphaFromAPT(apt_0)
+    pxv = hlc3 * volume
+    v0  = volume
+    p_vwap   := (1.0 - alpha) * p_vwap + alpha * pxv
+    vol_vwap := (1.0 - alpha) * vol_vwap + alpha * v0
+    vap = vol_vwap > 0 ? p_vwap / vol_vwap : na
+    vwap_data.poly.delete()
+    vwap_data.points.push(chart.point.from_index(b, vap))
+    vwap_data.poly := polyline.new(vwap_data.points, false, false, line_color=dir_vwap > 0 ? R_vwap : S_vwap, line_width=xx_vwap)
+
+vwapBullish = lastSwing == 1
+vwapBearish = lastSwing == -1
+
+// =========================================================================
+// STEP 9: FIB BANDS
+// =========================================================================
+basis   = ta.ema(ta.ema(src_fib, len_fib), len_fib)
+vol_fib = useATR_fib ? ta.atr(atrLen_fib) : ta.stdev(src_fib, len_fib)
+var int trend_fib = 0
+trend_fib := basis > basis[1] ? 1 : basis < basis[1] ? -1 : nz(trend_fib[1])
+fibBullish = trend_fib == 1
+fibBearish = trend_fib == -1
+
+u1_v = trend_fib == -1 ? basis + vol_fib * 0.618 : na
+u4_v = trend_fib == -1 ? basis + vol_fib * 2.618 : na
+l1_v = trend_fib == 1  ? basis - vol_fib * 0.618 : na
+l4_v = trend_fib == 1  ? basis - vol_fib * 2.618 : na
+u1 = plot(u1_v, color=color.new(color.red, 60), style=plot.style_linebr)
+u4 = plot(u4_v, color=color.new(color.red, 30), style=plot.style_linebr)
+l1 = plot(l1_v, color=color.new(color.green, 60), style=plot.style_linebr)
+l4 = plot(l4_v, color=color.new(color.green, 30), style=plot.style_linebr)
+fill(u1, u4, color=color.new(color.red, 85))
+fill(l1, l4, color=color.new(color.green, 85))
+
+// =========================================================================
+// STEP 10: SIGNAL SMOOTHING & LINREG
+// =========================================================================
+_bclose = lin_reg ? ta.linreg(close, linreg_length, 0) : close
+signal  = sma_signal ? ta.sma(_bclose, signal_length) : ta.ema(_bclose, signal_length)
+
+// =========================================================================
+// STEP 11: CONFLUENCE ENGINE — THE CLAW'S CONFIDENCE CORE
+// =========================================================================
+bool trail_allows_long  = ltf_trend == 1
+bool trail_allows_short = ltf_trend == -1
+
+bool mtf_bull_conf = m15_trend == 1 and h1_trend == 1
+bool mtf_bear_conf = m15_trend == -1 and h1_trend == -1
+bool mtf_partial_bull = m15_trend == 1 or h1_trend == 1
+bool mtf_partial_bear = m15_trend == -1 or h1_trend == -1
+
+bool struct_bull_conf = structBias == 1
+bool struct_bear_conf = structBias == -1
+
+bool rsi_bull_conf = positive
+bool rsi_bear_conf = negative
+
+bool vwap_bull_conf = vwapBullish
+bool vwap_bear_conf = vwapBearish
+
+bool fib_bull_conf = fibBullish
+bool fib_bear_conf = fibBearish
+
+// --- Compute Confidence Score ---
+float bull_score = 0.0
+float bull_max   = 0.0
+float bear_score = 0.0
+float bear_max   = 0.0
+
+bull_score += mtf_bull_conf ? mtf_weight : mtf_partial_bull ? mtf_weight * 0.4 : 0
+bull_max   += mtf_weight
+bear_score += mtf_bear_conf ? mtf_weight : mtf_partial_bear ? mtf_weight * 0.4 : 0
+bear_max   += mtf_weight
+
+bull_score += struct_bull_conf ? struct_weight : 0
+bull_max   += struct_weight
+bear_score += struct_bear_conf ? struct_weight : 0
+bear_max   += struct_weight
+
+bull_score += rsi_bull_conf ? rsi_weight : 0
+bull_max   += rsi_weight
+bear_score += rsi_bear_conf ? rsi_weight : 0
+bear_max   += rsi_weight
+
+bull_score += vwap_bull_conf ? vwap_weight : 0
+bull_max   += vwap_weight
+bear_score += vwap_bear_conf ? vwap_weight : 0
+bear_max   += vwap_weight
+
+if requireFibTrend
+    bull_score += fib_bull_conf ? fib_weight : 0
+    bull_max   += fib_weight
+    bear_score += fib_bear_conf ? fib_weight : 0
+    bear_max   += fib_weight
+
+if vpEnabled
+    bull_score += vp_bullish_conf ? vp_weight : 0
+    bull_max   += vp_weight
+    bear_score += vp_bearish_conf ? vp_weight : 0
+    bear_max   += vp_weight
+
+float bull_conf_pct = bull_max > 0 ? (bull_score / bull_max) * 100 : 0
+float bear_conf_pct = bear_max > 0 ? (bear_score / bear_max) * 100 : 0
+
+int conf_threshold = switch claw_mode
+    "Conservative" => 80
+    "Moderate"     => 60
+    "Aggressive"   => 40
+    "Custom"       => custom_threshold
+    => 60
+
+bool bull_conf_pass = bull_conf_pct >= conf_threshold
+bool bear_conf_pass = bear_conf_pct >= conf_threshold
+
+// =========================================================================
+// STEP 12: SIGNAL GENERATION — TRIGGER + GATE + CONFIDENCE
+// =========================================================================
+bool trig_ut_buy    = ut_buy_signal
+bool trig_ut_sell   = ut_sell_signal
+bool trig_smart_buy = newSmartBull and barstate.isconfirmed
+bool trig_smart_sell = newSmartBear and barstate.isconfirmed
+
+bool gated_ut_buy     = trig_ut_buy    and trail_allows_long
+bool gated_ut_sell    = trig_ut_sell   and trail_allows_short
+bool gated_smart_buy  = trig_smart_buy  and trail_allows_long
+bool gated_smart_sell = trig_smart_sell and trail_allows_short
+
+final_ut_buy     = gated_ut_buy     and bull_conf_pass
+final_ut_sell    = gated_ut_sell    and bear_conf_pass
+final_smart_buy  = gated_smart_buy  and bull_conf_pass
+final_smart_sell = gated_smart_sell and bear_conf_pass
+
+final_long  = final_ut_buy or final_smart_buy
+final_short = final_ut_sell or final_smart_sell
+
+rejected_ut_buy     = trig_ut_buy    and not trail_allows_long
+rejected_ut_sell    = trig_ut_sell   and not trail_allows_short
+rejected_smart_buy  = trig_smart_buy  and not trail_allows_long
+rejected_smart_sell = trig_smart_sell and not trail_allows_short
+rejected_conf_buy   = (gated_ut_buy or gated_smart_buy) and not bull_conf_pass
+rejected_conf_sell  = (gated_ut_sell or gated_smart_sell) and not bear_conf_pass
+any_rejected_long   = rejected_ut_buy or rejected_smart_buy or rejected_conf_buy
+any_rejected_short  = rejected_ut_sell or rejected_smart_sell or rejected_conf_sell
+
+var int posState = 0
+if final_long and posState <= 0
+    posState := 1
+else if final_short and posState >= 0
+    posState := -1
+
+bool flip_bull = ltf_trend == 1  and ltf_trend[1] == -1
+bool flip_bear = ltf_trend == -1 and ltf_trend[1] == 1
+
+// =========================================================================
+// STEP 13: VISUAL OUTPUTS
+// =========================================================================
+p_trail = plot(ltf_trend != ltf_trend[1] ? na : ltf_trail, "Trail", color=trend_col, linewidth=2, style=plot.style_linebr)
+p_ma    = plot(ta.ema(close, ma_len), "MA", color=color.new(trend_col, 100), linewidth=1)
+fill(p_trail, p_ma, ltf_trail, ta.ema(close, ma_len), color.new(trend_col, 85), color.new(trend_col, 96), "Trend Cloud")
+
+plotshape(flip_bull ? ltf_trail : na, "Buy Glow",  shape.diamond, location.absolute, color.new(bull_color, 50), size=size.small)
+plotshape(flip_bull ? ltf_trail : na, "Buy",        shape.diamond, location.absolute, bull_color,                size=size.tiny)
+plotshape(flip_bear ? ltf_trail : na, "Sell Glow",  shape.diamond, location.absolute, color.new(bear_color, 50), size=size.small)
+plotshape(flip_bear ? ltf_trail : na, "Sell",       shape.diamond, location.absolute, bear_color,                size=size.tiny)
+
+plotshape(final_ut_buy,     title="UT Buy",     style=shape.labelup,   location=location.belowbar, color=bull_color, textcolor=color.white, size=size.small, text="⚡Buy")
+plotshape(final_ut_sell,    title="UT Sell",     style=shape.labeldown, location=location.abovebar, color=bear_color, textcolor=color.white, size=size.small, text="⚡Sell")
+plotshape(final_smart_buy,  title="Smart Buy",   style=shape.labelup,   location=location.belowbar, color=bull_color, textcolor=color.white, size=size.tiny, text="🧠Buy")
+plotshape(final_smart_sell, title="Smart Sell",  style=shape.labeldown, location=location.abovebar, color=bear_color, textcolor=color.white, size=size.tiny, text="🧠Sell")
+
+plotshape(any_rejected_long,  title="Rejected Long",  style=shape.xcross, location=location.belowbar, color=color.gray, size=size.tiny)
+plotshape(any_rejected_short, title="Rejected Short", style=shape.xcross, location=location.abovebar, color=color.gray, size=size.tiny)
+
+barcolor(final_long ? color.new(bull_color, 75) : final_short ? color.new(bear_color, 75) : na)
+bgcolor(enableRegimeFilter ? (positive ? color.new(color.green, 95) : negative ? color.new(color.red, 95) : na) : na)
+
+_bopen = lin_reg ? ta.linreg(open, linreg_length, 0) : open
+_bhigh = lin_reg ? ta.linreg(high, linreg_length, 0) : high
+_blow  = lin_reg ? ta.linreg(low,  linreg_length, 0) : low
+plotcandle(_bopen, _bhigh, _blow, _bclose, title="Candles", color=ltf_trend == 1 ? bull_color : bear_color, wickcolor=ltf_trend == 1 ? bull_color : bear_color, bordercolor=ltf_trend == 1 ? bull_color : bear_color)
+plot(signal, color=color.blue, linewidth=2, title="Signal")
+
+// =========================================================================
+// STEP 14: LONGEVITY ZONES
+// =========================================================================
+type level
+    float top
+    float bot
+    int start
+type drawing
+    line top
+    line bot
+    linefill fill
+    label lbl
+var upper      = array.new<level>()
+var lower      = array.new<level>()
+var upperDraw  = array.new<drawing>()
+var lowerDraw  = array.new<drawing>()
+h_zone      = ta.highest(len_z)
+l_zone      = ta.lowest(len_z)
+high_pivot  = high[1] == h_zone[1] and high < h_zone
+low_pivot   = low[1] == l_zone[1]  and low > l_zone
+halfATR     = ta.atr(20) * 0.5
+labels_at_root = lab_pos == "LastBar"
+
+if showLongevity
+    if high_pivot
+        array.push(upper, level.new(h_zone, h_zone - halfATR, bar_index - 1))
+    if low_pivot
+        array.push(lower, level.new(l_zone + halfATR, l_zone, bar_index - 1))
+    if array.size(upper) > 10
+        array.shift(upper)
+    if array.size(lower) > 10
+        array.shift(lower)
+    for i = array.size(upper) - 1 to 0
+        if array.size(upper) == 0
+            break
+        zUp = array.get(upper, i)
+        if high > zUp.top and bar_index > zUp.start
+            array.remove(upper, i)
+    for i = array.size(lower) - 1 to 0
+        if array.size(lower) == 0
+            break
+        zLo = array.get(lower, i)
+        if low < zLo.bot and bar_index > zLo.start
+            array.remove(lower, i)
+
+if barstate.islast and showLongevity
+    if array.size(upperDraw) > 0
+        for i = 0 to array.size(upperDraw) - 1
+            d = array.get(upperDraw, i)
+            line.delete(d.top)
+            line.delete(d.bot)
+            if not na(d.fill)
+                linefill.delete(d.fill)
+            label.delete(d.lbl)
+        array.clear(upperDraw)
+    if array.size(lowerDraw) > 0
+        for i = 0 to array.size(lowerDraw) - 1
+            d = array.get(lowerDraw, i)
+            line.delete(d.top)
+            line.delete(d.bot)
+            if not na(d.fill)
+                linefill.delete(d.fill)
+            label.delete(d.lbl)
+        array.clear(lowerDraw)
+    if array.size(upper) > 0
+        for i = 0 to array.size(upper) - 1
+            z = array.get(upper, i)
+            l1 = line.new(z.start, z.top, bar_index, z.top, color=col_upper, width=8)
+            l2 = line.new(z.start, z.bot, bar_index, z.bot, color=col_upper, width=8)
+            f  = linefill.new(l1, l2, col_upper)
+            dur = bar_index - z.start
+            daysTot = int(dur * (timeframe.in_seconds(timeframe.period) / 86400))
+            txt = daysTot >= 365 ? str.tostring(int(daysTot / 365)) + " Y (" + str.tostring(dur) + " bars)" : daysTot >= 30 ? str.tostring(int(daysTot / 30)) + " M (" + str.tostring(dur) + " bars)" : str.tostring(daysTot) + " D (" + str.tostring(dur) + " bars)"
+            lx = labels_at_root ? z.start : bar_index + labelOffsetBars
+            ly = (z.top + z.bot) / 2
+            lbl = label.new(lx, ly, txt, style=label.style_label_center, textcolor=color.white, color=color.new(color.black, 0))
+            array.push(upperDraw, drawing.new(l1, l2, f, lbl))
+    if array.size(lower) > 0
+        for i = 0 to array.size(lower) - 1
+            z = array.get(lower, i)
+            l1 = line.new(z.start, z.top, bar_index, z.top, color=col_lower, width=8)
+            l2 = line.new(z.start, z.bot, bar_index, z.bot, color=col_lower, width=8)
+            f  = linefill.new(l1, l2, col_lower)
+            dur = bar_index - z.start
+            daysTot = int(dur * (timeframe.in_seconds(timeframe.period) / 86400))
+            txt = daysTot >= 365 ? str.tostring(int(daysTot / 365)) + " Y (" + str.tostring(dur) + " bars)" : daysTot >= 30 ? str.tostring(int(daysTot / 30)) + " M (" + str.tostring(dur) + " bars)" : str.tostring(daysTot) + " D (" + str.tostring(dur) + " bars)"
+            lx = labels_at_root ? z.start : bar_index + labelOffsetBars
+            ly = (z.top + z.bot) / 2
+            lbl = label.new(lx, ly, txt, style=label.style_label_center, textcolor=color.white, color=color.new(color.black, 0))
+            array.push(lowerDraw, drawing.new(l1, l2, f, lbl))
+
+// =========================================================================
+// STEP 15: COGNITIVE DASHBOARD
+// =========================================================================
+var table dashTable = na
+var string prevPlace = ""
+pos_enum = switch panelPlacement
+    "Top-Right"     => position.top_right
+    "Top-Left"      => position.top_left
+    "Bottom-Right"  => position.bottom_right
+    "Bottom-Left"   => position.bottom_left
+    "Bottom-Center" => position.bottom_center
+    => position.top_right
+
+color bg_panel   = color.new(#1e222d, 10)
+color bg_header  = color.new(#2a2e39, 10)
+color bg_section = color.new(#2a2e39, 30)
+color txt_title  = color.new(dashTextColor, 0)
+color txt_label  = color.new(color.gray, 10)
+color txt_bull   = color.new(bull_color, 0)
+color txt_bear   = color.new(bear_color, 0)
+color txt_neut   = color.new(color.gray, 0)
+color gate_pass  = color.new(#00ff00, 20)
+color gate_fail  = color.new(#ff0000, 20)
+color gate_warn  = color.new(#ffaa00, 20)
+
+string sys_bias    = ltf_trend == 1 ? "BULLISH" : ltf_trend == -1 ? "BEARISH" : "NEUTRAL"
+string sys_action  = posState == 1 ? "🟢 IN LONG" : posState == -1 ? "🔴 IN SHORT" : "⚪ FLAT"
+float  sys_conf    = ltf_trend == 1 ? bull_conf_pct : ltf_trend == -1 ? bear_conf_pct : 0.0
+string sys_waiting = ltf_trend == 1 ? (bull_conf_pass ? "ATM Trigger" : "Conf " + str.tostring(math.round(bull_conf_pct)) + "%→" + str.tostring(conf_threshold) + "%") : ltf_trend == -1 ? (bear_conf_pass ? "ATM Trigger" : "Conf " + str.tostring(math.round(bear_conf_pct)) + "%→" + str.tostring(conf_threshold) + "%") : "Trail Direction"
+string sys_flip_req = ltf_trend == 1 ? "Trail flip → bearish" : ltf_trend == -1 ? "Trail flip → bullish" : "Any trail confirmation"
+
+float bull_mtf_pts = mtf_bull_conf ? mtf_weight : mtf_partial_bull ? mtf_weight * 0.4 : 0.0
+float bear_mtf_pts = mtf_bear_conf ? mtf_weight : mtf_partial_bear ? mtf_weight * 0.4 : 0.0
+
+if dashOn and (na(dashTable) or panelPlacement != prevPlace)
+    dashTable := table.new(pos_enum, 4, 28, border_width=1, border_color=color.new(color.gray, 70), frame_width=1, frame_color=color.new(color.gray, 70))
+    prevPlace := panelPlacement
+
+if dashOn and not na(dashTable)
+    // ===== R0: HEADER =====
+    table.merge_cells(dashTable, 0, 0, 3, 0)
+    table.cell(dashTable, 0, 0, " 🦞 THE CLAW PROTOCOL ", text_color=txt_title, text_size=size.normal, bgcolor=bg_header, text_halign=text.align_left)
+
+    // ===== R1: SELF-AWARENESS =====
+    table.merge_cells(dashTable, 0, 1, 3, 1)
+    table.cell(dashTable, 0, 1, " 🧠 SELF-AWARENESS ", text_color=txt_title, text_size=size.small, bgcolor=bg_section, text_halign=text.align_left)
+
+    // ===== R2: Who am I? =====
+    table.cell(dashTable, 0, 2, " I AM ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 2, 3, 2)
+    table.cell(dashTable, 1, 2, sys_bias + "  •  " + sys_action + "  •  " + str.tostring(math.round(sys_conf)) + "% conf", text_color=ltf_trend == 1 ? txt_bull : txt_bear, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R3: Waiting for =====
+    table.cell(dashTable, 0, 3, " WAITING ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 3, 3, 3)
+    table.cell(dashTable, 1, 3, sys_waiting, text_color=gate_warn, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R4: Flip condition =====
+    table.cell(dashTable, 0, 4, " FLIP IF ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 4, 3, 4)
+    table.cell(dashTable, 1, 4, sys_flip_req, text_color=txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R5: FRACTAL VIEW =====
+    table.merge_cells(dashTable, 0, 5, 3, 5)
+    table.cell(dashTable, 0, 5, " 🌐 FRACTAL — H1→M15→Now ", text_color=txt_title, text_size=size.small, bgcolor=bg_section, text_halign=text.align_left)
+
+    // ===== R6: H1 Intraday =====
+    table.cell(dashTable, 0, 6, " H1 INTRADAY ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 6, h1_trend == 1 ? "🔺 BULL" : h1_trend == -1 ? "🔻 BEAR" : "⚪ NEUT", text_color=h1_trend == 1 ? txt_bull : h1_trend == -1 ? txt_bear : txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 6, "TRUTH", text_color=color.new(color.gray, 50), text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 6, h1_trend == ltf_trend ? "✅" : "⚠️", text_color=h1_trend == ltf_trend ? gate_pass : gate_warn, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R7: M15 Tactical =====
+    table.cell(dashTable, 0, 7, " M15 TACTICAL ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 7, m15_trend == 1 ? "🔺 BULL" : m15_trend == -1 ? "🔻 BEAR" : "⚪ NEUT", text_color=m15_trend == 1 ? txt_bull : m15_trend == -1 ? txt_bear : txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 7, mtf_bullish or mtf_bearish ? "ALIGNED" : "PARTIAL", text_color=mtf_bullish or mtf_bearish ? gate_pass : gate_warn, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 7, m15_trend == ltf_trend ? "✅" : "⚠️", text_color=m15_trend == ltf_trend ? gate_pass : gate_warn, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R8: Now Structure =====
+    table.cell(dashTable, 0, 8, " NOW STRUCT ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 8, structLabel, text_color=structBias == 1 ? txt_bull : structBias == -1 ? txt_bear : txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 8, bullBOS ? "BOS↑" : bearBOS ? "BOS↓" : "—", text_color=bullBOS ? txt_bull : bearBOS ? txt_bear : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 8, structBias == ltf_trend ? "✅" : "⚠️", text_color=structBias == ltf_trend ? gate_pass : gate_warn, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R9: LONG CONFLUENCE =====
+    table.merge_cells(dashTable, 0, 9, 3, 9)
+    table.cell(dashTable, 0, 9, " 🟢 LONG → " + str.tostring(math.round(bull_conf_pct)) + "% (need " + str.tostring(conf_threshold) + "%) ", text_color=txt_bull, text_size=size.small, bgcolor=color.new(bull_color, 85), text_halign=text.align_left)
+
+    // ===== R10-R15: Long factors =====
+    table.cell(dashTable, 0, 10, " MTF ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 10, mtf_bull_conf ? "FULL" : mtf_partial_bull ? "PARTIAL" : "FAIL", text_color=mtf_bull_conf ? gate_pass : mtf_partial_bull ? gate_warn : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 10, "+" + str.tostring(bull_mtf_pts, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 10, mtf_bull_conf ? "✅" : mtf_partial_bull ? "⚠️" : "❌", text_color=mtf_bull_conf ? gate_pass : mtf_partial_bull ? gate_warn : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 11, " STRUCT ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 11, struct_bull_conf ? "HH/HL" : "NO", text_color=struct_bull_conf ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 11, "+" + str.tostring(struct_bull_conf ? struct_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 11, struct_bull_conf ? "✅" : "❌", text_color=struct_bull_conf ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 12, " RSI ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 12, positive ? "POS" : "NO", text_color=positive ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 12, "+" + str.tostring(positive ? rsi_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 12, positive ? "✅" : "❌", text_color=positive ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 13, " VWAP ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 13, vwapBullish ? "BULL" : "NO", text_color=vwapBullish ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 13, "+" + str.tostring(vwapBullish ? vwap_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 13, vwapBullish ? "✅" : "❌", text_color=vwapBullish ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 14, " FIB ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 14, requireFibTrend ? (fibBullish ? "BULL" : "NO") : "OFF", text_color=requireFibTrend ? (fibBullish ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 14, requireFibTrend ? "+" + str.tostring(fibBullish ? fib_weight : 0.0, "#.#") : "—", text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 14, requireFibTrend ? (fibBullish ? "✅" : "❌") : "⚪", text_color=requireFibTrend ? (fibBullish ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 15, " VP ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 15, vpEnabled ? (vp_bullish_conf ? ">VAL" : "NO") : "OFF", text_color=vpEnabled ? (vp_bullish_conf ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 15, vpEnabled ? "+" + str.tostring(vp_bullish_conf ? vp_weight : 0.0, "#.#") : "—", text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 15, vpEnabled ? (vp_bullish_conf ? "✅" : "❌") : "⚪", text_color=vpEnabled ? (vp_bullish_conf ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R16: SHORT CONFLUENCE =====
+    table.merge_cells(dashTable, 0, 16, 3, 16)
+    table.cell(dashTable, 0, 16, " 🔴 SHORT → " + str.tostring(math.round(bear_conf_pct)) + "% (need " + str.tostring(conf_threshold) + "%) ", text_color=txt_bear, text_size=size.small, bgcolor=color.new(bear_color, 85), text_halign=text.align_left)
+
+    // ===== R17-R22: Short factors =====
+    table.cell(dashTable, 0, 17, " MTF ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 17, mtf_bear_conf ? "FULL" : mtf_partial_bear ? "PARTIAL" : "FAIL", text_color=mtf_bear_conf ? gate_pass : mtf_partial_bear ? gate_warn : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 17, "+" + str.tostring(bear_mtf_pts, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 17, mtf_bear_conf ? "✅" : mtf_partial_bear ? "⚠️" : "❌", text_color=mtf_bear_conf ? gate_pass : mtf_partial_bear ? gate_warn : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 18, " STRUCT ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 18, struct_bear_conf ? "LH/LL" : "NO", text_color=struct_bear_conf ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 18, "+" + str.tostring(struct_bear_conf ? struct_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 18, struct_bear_conf ? "✅" : "❌", text_color=struct_bear_conf ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 19, " RSI ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 19, negative ? "NEG" : "NO", text_color=negative ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 19, "+" + str.tostring(negative ? rsi_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 19, negative ? "✅" : "❌", text_color=negative ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 20, " VWAP ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 20, vwapBearish ? "BEAR" : "NO", text_color=vwapBearish ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 20, "+" + str.tostring(vwapBearish ? vwap_weight : 0.0, "#.#"), text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 20, vwapBearish ? "✅" : "❌", text_color=vwapBearish ? gate_pass : gate_fail, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 21, " FIB ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 21, requireFibTrend ? (fibBearish ? "BEAR" : "NO") : "OFF", text_color=requireFibTrend ? (fibBearish ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 21, requireFibTrend ? "+" + str.tostring(fibBearish ? fib_weight : 0.0, "#.#") : "—", text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 21, requireFibTrend ? (fibBearish ? "✅" : "❌") : "⚪", text_color=requireFibTrend ? (fibBearish ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    table.cell(dashTable, 0, 22, " VP ", text_color=txt_label, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_left)
+    table.cell(dashTable, 1, 22, vpEnabled ? (vp_bearish_conf ? "<VAH" : "NO") : "OFF", text_color=vpEnabled ? (vp_bearish_conf ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 22, vpEnabled ? "+" + str.tostring(vp_bearish_conf ? vp_weight : 0.0, "#.#") : "—", text_color=txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 22, vpEnabled ? (vp_bearish_conf ? "✅" : "❌") : "⚪", text_color=vpEnabled ? (vp_bearish_conf ? gate_pass : gate_fail) : txt_neut, text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R23: EXECUTION =====
+    table.merge_cells(dashTable, 0, 23, 3, 23)
+    table.cell(dashTable, 0, 23, " ⚡ EXECUTION ", text_color=txt_title, text_size=size.small, bgcolor=bg_section, text_halign=text.align_left)
+
+    // ===== R24: Trigger =====
+    table.cell(dashTable, 0, 24, " TRIGGER ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    string trig_label = trig_ut_buy ? "⚡ UT BUY" : trig_smart_buy ? "🧠 SMART BUY" : trig_ut_sell ? "⚡ UT SELL" : trig_smart_sell ? "🧠 SMART SELL" : "⏸ WAIT"
+    color  trig_color = trig_ut_buy or trig_smart_buy ? txt_bull : trig_ut_sell or trig_smart_sell ? txt_bear : txt_neut
+    table.cell(dashTable, 1, 24, trig_label, text_color=trig_color, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 2, 24, "DIR", text_color=color.new(color.gray, 50), text_size=size.tiny, bgcolor=bg_panel, text_halign=text.align_center)
+    table.cell(dashTable, 3, 24, trail_allows_long ? "🟢L" : trail_allows_short ? "🔴S" : "⚪", text_color=trail_allows_long ? gate_pass : trail_allows_short ? gate_fail : txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R25: Confidence gate =====
+    table.cell(dashTable, 0, 25, " CONF GATE ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 25, 3, 25)
+    string conf_label = final_long ? "🟢 EXEC" : final_short ? "🔴 EXEC" : (bull_conf_pass or bear_conf_pass) ? "⚠️ CONF OK, NO TRIG" : "❌ LOW CONF"
+    color  conf_color = final_long ? txt_bull : final_short ? txt_bear : gate_warn
+    table.cell(dashTable, 1, 25, conf_label, text_color=conf_color, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R26: Claw Mode =====
+    table.cell(dashTable, 0, 26, " CLAW ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 26, 3, 26)
+    table.cell(dashTable, 1, 26, claw_mode + " → " + str.tostring(conf_threshold) + "% threshold", text_color=txt_neut, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+    // ===== R27: VP Strength =====
+    table.cell(dashTable, 0, 27, " VOL ", text_color=txt_label, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_left)
+    table.merge_cells(dashTable, 1, 27, 3, 27)
+    table.cell(dashTable, 1, 27, vp_strength, text_color=close > nz(vp_currentVAL, close) ? txt_bull : txt_bear, text_size=size.small, bgcolor=bg_panel, text_halign=text.align_center)
+
+else if not dashOn and not na(dashTable)
+    table.clear(dashTable, 0, 0, 3, 27)
+    dashTable := na
+    prevPlace := ""
+
+// =========================================================================
+// STEP 16: ALERTS
+// =========================================================================
+alertcondition(final_long,          title="Claw Long",            message="CLAW Protocol: LONG ENTRY")
+alertcondition(final_short,         title="Claw Short",           message="CLAW Protocol: SHORT ENTRY")
+alertcondition(final_ut_buy,        title="UT Buy Executed",      message="CLAW Protocol: UT BUY EXECUTED")
+alertcondition(final_ut_sell,       title="UT Sell Executed",     message="CLAW Protocol: UT SELL EXECUTED")
+alertcondition(final_smart_buy,     title="Smart Buy Executed",   message="CLAW Protocol: SMART BUY EXECUTED")
+alertcondition(final_smart_sell,    title="Smart Sell Executed",  message="CLAW Protocol: SMART SELL EXECUTED")
+alertcondition(any_rejected_long,   title="⚠️ Long Rejected",    message="CLAW Protocol: LONG BLOCKED")
+alertcondition(any_rejected_short,  title="⚠️ Short Rejected",   message="CLAW Protocol: SHORT BLOCKED")
+alertcondition(bullBOS,             title="Bullish BOS",          message="CLAW Protocol: BULLISH BREAK OF STRUCTURE")
+alertcondition(bearBOS,             title="Bearish BOS",          message="CLAW Protocol: BEARISH BREAK OF STRUCTURE")
+alertcondition(pcondition,          title="RSI Positive",         message="CLAW Protocol: RSI POSITIVE MOMENTUM")
+alertcondition(ncondition2,         title="RSI Negative",         message="CLAW Protocol: RSI NEGATIVE MOMENTUM")
+alertcondition(bull_conf_pass and not bull_conf_pass[1], title="Long Confidence Pass", message="CLAW Protocol: LONG CONFIDENCE THRESHOLD MET")
+alertcondition(bear_conf_pass and not bear_conf_pass[1], title="Short Confidence Pass", message="CLAW Protocol: SHORT CONFIDENCE THRESHOLD MET")
+
+// ===========================================================================
+// TradeSgnl Engine & Execution Layer
+// ===========================================================================
+var int current_direction = 0  // 0: Flat, 1: Long, -1: Short
+var int scale_in_count = 0
+
+// Synchronize position tracking
+if strategy.position_size == 0
+    current_direction := 0
+    scale_in_count := 0
+
+// Helper to replace JSON templates with dynamic calculations
+f_replace_placeholders(string template, float sl_val, float tp_val, float risk_val, float trtrig_val, float trdist_val) =>
+    res = template
+    res := str.replace_all(res, "{{ticker}}", syminfo.ticker)
+    res := str.replace_all(res, "{{symbol}}", syminfo.ticker)
+    res := str.replace_all(res, "{{sl}}", not na(sl_val) ? str.tostring(sl_val) : "")
+    res := str.replace_all(res, "{{tp}}", not na(tp_val) ? str.tostring(tp_val) : "")
+    res := str.replace_all(res, "{{risk}}", not na(risk_val) ? str.tostring(risk_val) : "")
+    res := str.replace_all(res, "{{trtrig}}", not na(trtrig_val) ? str.tostring(trtrig_val) : "")
+    res := str.replace_all(res, "{{trdist}}", not na(trdist_val) ? str.tostring(trdist_val) : "")
+    res
+
+// Dynamic ranges
+float atr_val = ta.atr(14)
+
+// Entry Triggers
+bool trigger_long_entry  = final_long and current_direction <= 0
+bool trigger_short_entry = final_short and current_direction >= 0
+bool trigger_long_scale  = strategy.position_size > 0 and newSmartBull and scale_in_count < max_scale_ins
+bool trigger_short_scale = strategy.position_size < 0 and newSmartBear and scale_in_count < max_scale_ins
+
+// Exit Triggers
+bool trigger_long_close  = strategy.position_size > 0 and (ltf_trend == -1 or final_short)
+bool trigger_short_close = strategy.position_size < 0 and (ltf_trend == 1 or final_long)
+
+// -------------------------------------------------------------------------
+// LONG POSITION FLOW
+// -------------------------------------------------------------------------
+if trigger_long_close
+    string alert_long_exit = f_replace_placeholders(long_exit_message, na, na, na, na, na)
+    strategy.close("Long", comment="Long Exit", alert_message=alert_long_exit)
+    current_direction := 0
+    scale_in_count := 0
+
+if trigger_long_entry
+    // Close short if currently active
+    if strategy.position_size < 0
+        string alert_short_exit = f_replace_placeholders(short_exit_message, na, na, na, na, na)
+        strategy.close("Short", comment="Short Exit", alert_message=alert_short_exit)
+
+    // Calculate long risk boundaries
+    float sl_long = not na(ltf_trail) ? ltf_trail : close - 2.0 * atr_val
+    float sl_dist_long = close - sl_long
+    if sl_dist_long <= 0
+        sl_long := close - 2.0 * atr_val
+        sl_dist_long := close - sl_long
+    float tp_long = close + rr_ratio * sl_dist_long
+    float trtrig_long = math.round(sl_dist_long / math.max(syminfo.mintick, 1e-9))
+    float trdist_long = math.round(sl_dist_long / math.max(syminfo.mintick, 1e-9))
+
+    string alert_long_entry = f_replace_placeholders(long_entry_message, sl_long, tp_long, initial_risk_usd, trtrig_long, trdist_long)
+    strategy.entry("Long", strategy.long, comment="Long Entry", alert_message=alert_long_entry)
+    strategy.exit("Long Exit", from_entry="Long", stop=sl_long, limit=tp_long, comment="Long Exit", alert_message=f_replace_placeholders(long_exit_message, na, na, na, na, na))
+    current_direction := 1
+    scale_in_count := 0
+
+if trigger_long_scale
+    // Calculate scale-in risk boundaries
+    float sl_long = not na(ltf_trail) ? ltf_trail : close - 2.0 * atr_val
+    float sl_dist_long = close - sl_long
+    if sl_dist_long <= 0
+        sl_long := close - 2.0 * atr_val
+        sl_dist_long := close - sl_long
+    float tp_long = close + rr_ratio * sl_dist_long
+    float trtrig_long = math.round(sl_dist_long / math.max(syminfo.mintick, 1e-9))
+    float trdist_long = math.round(sl_dist_long / math.max(syminfo.mintick, 1e-9))
+
+    scale_in_count := scale_in_count + 1
+    string alert_long_scale = f_replace_placeholders(long_entry_message, sl_long, tp_long, scale_in_risk_usd, trtrig_long, trdist_long)
+    strategy.entry("Long", strategy.long, comment="Long Entry", alert_message=alert_long_scale)
+    strategy.exit("Long Exit", from_entry="Long", stop=sl_long, limit=tp_long, comment="Long Exit", alert_message=f_replace_placeholders(long_exit_message, na, na, na, na, na))
+
+// -------------------------------------------------------------------------
+// SHORT POSITION FLOW
+// -------------------------------------------------------------------------
+if trigger_short_close
+    string alert_short_exit = f_replace_placeholders(short_exit_message, na, na, na, na, na)
+    strategy.close("Short", comment="Short Exit", alert_message=alert_short_exit)
+    current_direction := 0
+    scale_in_count := 0
+
+if trigger_short_entry
+    // Close long if currently active
+    if strategy.position_size > 0
+        string alert_long_exit = f_replace_placeholders(long_exit_message, na, na, na, na, na)
+        strategy.close("Long", comment="Long Exit", alert_message=alert_long_exit)
+
+    // Calculate short risk boundaries
+    float sl_short = not na(ltf_trail) ? ltf_trail : close + 2.0 * atr_val
+    float sl_dist_short = sl_short - close
+    if sl_dist_short <= 0
+        sl_short := close + 2.0 * atr_val
+        sl_dist_short := sl_short - close
+    float tp_short = close - rr_ratio * sl_dist_short
+    float trtrig_short = math.round(sl_dist_short / math.max(syminfo.mintick, 1e-9))
+    float trdist_short = math.round(sl_dist_short / math.max(syminfo.mintick, 1e-9))
+
+    string alert_short_entry = f_replace_placeholders(short_entry_message, sl_short, tp_short, initial_risk_usd, trtrig_short, trdist_short)
+    strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=alert_short_entry)
+    strategy.exit("Short Exit", from_entry="Short", stop=sl_short, limit=tp_short, comment="Short Exit", alert_message=f_replace_placeholders(short_exit_message, na, na, na, na, na))
+    current_direction := -1
+    scale_in_count := 0
+
+if trigger_short_scale
+    // Calculate scale-in risk boundaries
+    float sl_short = not na(ltf_trail) ? ltf_trail : close + 2.0 * atr_val
+    float sl_dist_short = sl_short - close
+    if sl_dist_short <= 0
+        sl_short := close + 2.0 * atr_val
+        sl_dist_short := sl_short - close
+    float tp_short = close - rr_ratio * sl_dist_short
+    float trtrig_short = math.round(sl_dist_short / math.max(syminfo.mintick, 1e-9))
+    float trdist_short = math.round(sl_dist_short / math.max(syminfo.mintick, 1e-9))
+
+    scale_in_count := scale_in_count + 1
+    string alert_short_scale = f_replace_placeholders(short_entry_message, sl_short, tp_short, scale_in_risk_usd, trtrig_short, trdist_short)
+    strategy.entry("Short", strategy.short, comment="Short Entry", alert_message=alert_short_scale)
+    strategy.exit("Short Exit", from_entry="Short", stop=sl_short, limit=tp_short, comment="Short Exit", alert_message=f_replace_placeholders(short_exit_message, na, na, na, na, na))
