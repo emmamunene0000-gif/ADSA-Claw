@@ -469,12 +469,14 @@ RISK: $${sig.dollarrisk} | BE@: ${sig.betrig} pips`
 
 // Webhook: TradeSgnl signal format
 app.post('/webhook/signal', async (req, res) => {
-  const secret = req.headers['x-adsa-secret']
+  const secret = req.headers['x-adsa-secret'] || req.query.secret
   if (process.env.ADSA_SECRET && secret !== process.env.ADSA_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
 
-  const raw = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
+  // Strip any leading label TradingView may prepend before the payload
+  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body)
+  const raw = rawBody.replace(/^[^A-Za-z0-9_-]*[\w\s-]*?(?=\w{3,},\w{2,}USD|[A-Z]{2,6}(INDEX|USD|BTC|ETH|XAU))/i, '').trim() || rawBody
   const sig = parseTradeSgnl(raw)
   if (!sig) return res.status(400).json({ error: 'Invalid signal format' })
 
@@ -526,7 +528,7 @@ app.post('/webhook/signal', async (req, res) => {
 
 // Webhook: Glass Box message (full narrative)
 app.post('/webhook/message', async (req, res) => {
-  const secret = req.headers['x-adsa-secret']
+  const secret = req.headers['x-adsa-secret'] || req.query.secret
   if (process.env.ADSA_SECRET && secret !== process.env.ADSA_SECRET) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
