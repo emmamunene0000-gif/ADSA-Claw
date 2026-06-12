@@ -2,6 +2,7 @@ require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const path = require('path')
+const https = require('https')
 const Anthropic = require('@anthropic-ai/sdk')
 
 const app = express()
@@ -346,6 +347,124 @@ ADVICE: ${parsed.ai_advice || 'N/A'}`
   }
 }
 
+// ── TELEGRAM BOT ───────────────────────────────────────────────────────────────
+function sendTelegram(text) {
+  const token  = process.env.TELEGRAM_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_CHAT_ID
+  if (!token || !chatId) return Promise.resolve(null)
+
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    })
+    const opts = {
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/sendMessage`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }
+    const req = https.request(opts, (r) => {
+      let d = ''
+      r.on('data', c => d += c)
+      r.on('end', () => { try { resolve(JSON.parse(d)) } catch (_) { resolve(null) } })
+    })
+    req.on('error', () => resolve(null))
+    req.write(body)
+    req.end()
+  })
+}
+
+function formatSignalTelegram(sig, analysis) {
+  const dir      = sig.action === 'buy' ? '🟢 LONG' : '🔴 SHORT'
+  const sigType  = sig.signal_type || 'LOCAL'
+  const conf     = sig.conf != null ? `${sig.conf}%` : '—'
+  const risk     = sig.dollarrisk   ? `$${sig.dollarrisk}` : '—'
+  const entry    = sig.entry   || 0
+  const sl       = sig.sl      || 0
+  const tp1      = sig.tp1     || 0
+  const tp2      = sig.tp2     || 0
+  const tp3      = sig.tp3     || 0
+  const spec     = PIP_VALUES[sig.symbol]
+  const pip      = spec ? spec.pip : 0.0001
+  const pipRnd   = v => v ? Math.round(Math.abs(v) / pip) : '—'
+  const slPips   = pipRnd(entry - sl)
+  const tp1Pips  = pipRnd(tp1 - entry)
+  const tp2Pips  = pipRnd(tp2 - entry)
+  const tp3Pips  = pipRnd(tp3 - entry)
+  const pct1     = sig.pct1 != null ? Math.round(sig.pct1 * 100) + '%' : '33%'
+  const pct2     = sig.pct2 != null ? Math.round(sig.pct2 * 100) + '%' : '50%'
+  const utcTime  = new Date().toISOString().slice(11, 16)
+
+  const verdictBlock = analysis
+    ? `\n━━━━━━━━━━━━━━━━━━━━━━\n🧠 <b>${analysis.verdict}</b> · ${analysis.max_tp} · ${analysis.confidence}%\n<i>${analysis.edge_note}</i>`
+    : ''
+
+  return `🔔 <b>ADSA SIGNAL — ${sig.symbol || 'UNKNOWN'}</b>
+━━━━━━━━━━━━━━━━━━━━━━
+${dir} | <b>${sigType}</b> [${conf}]
+━━━━━━━━━━━━━━━━━━━━━━
+<code>Entry  : ${entry}
+SL     : ${sl}  (${slPips} pips)
+TP1    : ${tp1}  (+${tp1Pips} pips) ${pct1}
+TP2    : ${tp2}  (+${tp2Pips} pips) ${pct2}
+TP3    : ${tp3}
+Risk   : ${risk}
+BE @   : ${sig.betrig || '—'} pips | Dist: ${sig.bedist || '—'}
+Trail  : ${sig.trdist || '—'} / ${sig.trstep || '—'}</code>${verdictBlock}
+━━━━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime} UTC`
+}
+
+function formatEventTelegram(event_type, parsed) {
+  const et  = (event_type || '').toUpperCase()
+  const sym = parsed.symbol || 'UNKNOWN'
+  const dir = parsed.direction === 'LONG' ? '🟢 LONG' : parsed.direction === 'SHORT' ? '🔴 SHORT' : ''
+  let icon  = '🔔'
+  if      (et.includes('TP3'))                         icon = '🚀'
+  else if (et.includes('TP2'))                         icon = '🎯🎯'
+  else if (et.includes('TP1'))                         icon = '🎯'
+  else if (et.includes('STOP') || et.includes('AUTOPSY')) icon = '💀'
+  else if (et.includes('HOLDER') && et.includes('EXIT')) icon = '🏁'
+  else if (et.includes('BREAKEVEN') || et.includes('BE HIT')) icon = '🔰'
+  else if (et.includes('BLOCKED') || et.includes('REJECTION')) icon = '🚫'
+
+  const score   = parsed.score != null ? ` | Score: ${parsed.score}/15` : ''
+  const advice  = parsed.ai_advice ? `\n💡 <i>${parsed.ai_advice}</i>` : ''
+  const utcTime = new Date().toISOString().slice(11, 16)
+
+  let prices = ''
+  if (parsed.entry) prices += `\nEntry: <code>${parsed.entry}</code>`
+  if (parsed.sl)    prices += ` | SL: <code>${parsed.sl}</code>`
+
+  return `${icon} <b>${event_type}</b>
+━━━━━━━━━━━━━━━━━━━━━━
+📊 ${sym} ${dir}${score}${prices}${advice}
+━━━━━━━━━━━━━━━━━━━━━━
+⏰ ${utcTime} UTC`
+}
+
+// Claude analysis specifically for TradeSgnl signal format
+async function analyzeSignal(sig) {
+  if (!anthropic) return null
+  try {
+    const ctx = `SIGNAL: ${sig.action?.toUpperCase()} ${sig.symbol}
+TYPE: ${sig.signal_type || 'LOCAL'} | CONF: ${sig.conf ?? 'N/A'}%
+ENTRY: ${sig.entry} | SL: ${sig.sl}
+TP1: ${sig.tp1} | TP2: ${sig.tp2} | TP3: ${sig.tp3}
+RISK: $${sig.dollarrisk} | BE@: ${sig.betrig} pips`
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 200,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: ctx }]
+    })
+    return JSON.parse(msg.content[0].text)
+  } catch (_) { return null }
+}
+
 // ── ENDPOINTS ──────────────────────────────────────────────────────────────────
 
 // Webhook: TradeSgnl signal format
@@ -387,7 +506,21 @@ app.post('/webhook/signal', async (req, res) => {
 
   await dbSaveSignal(enriched)
   broadcast('signal_new', enriched)
-  console.log(`[SIGNAL] ${sig.action} ${sig.symbol} SL:${sig.sl_price} TP1:${sig.tp1_price}`)
+
+  // Telegram: send signal card immediately, then attach Claude verdict when ready
+  if (['buy', 'sell'].includes(sig.action)) {
+    if (anthropic) {
+      analyzeSignal(enriched).then(analysis => {
+        const tgMsg = formatSignalTelegram(enriched, analysis)
+        sendTelegram(tgMsg)
+        if (analysis) broadcast('signal_analysis', { trade_id: enriched.trade_id, analysis })
+      }).catch(() => sendTelegram(formatSignalTelegram(enriched, null)))
+    } else {
+      sendTelegram(formatSignalTelegram(enriched, null))
+    }
+  }
+
+  console.log(`[SIGNAL] ${sig.action} ${sig.symbol} SL:${sig.sl} TP1:${sig.tp1}`)
   res.json({ ok: true, signal: enriched })
 })
 
@@ -435,6 +568,14 @@ app.post('/webhook/message', async (req, res) => {
   if (state.recent_messages.length > 50) state.recent_messages.pop()
 
   broadcast('glass_box', { content, event_type, parsed, timestamp, id: msgRecord.id })
+
+  // Telegram: lifecycle events (skip raw ENTRY — already sent via /webhook/signal)
+  const isLifecycleEvent = et.includes('TP') || et.includes('STOP') || et.includes('AUTOPSY') ||
+                           et.includes('HOLDER') || et.includes('BREAKEVEN') || et.includes('BLOCKED')
+  if (isLifecycleEvent) {
+    sendTelegram(formatEventTelegram(event_type, parsed))
+  }
+
   console.log(`[MSG] ${event_type} | ${parsed.symbol || ''} | score:${parsed.score ?? 'N/A'}`)
   res.json({ ok: true, event_type, parsed })
 })
@@ -459,6 +600,39 @@ app.post('/webhook/outcome', async (req, res) => {
     db.query('UPDATE signals SET status=$1, pts_actual=$2 WHERE trade_id=$3', [outcome_type, pts_actual, trade_id]).catch(() => {})
   }
   res.json({ ok: true })
+})
+
+// Test signal endpoint — fires a demo SYNC4 buy on XAUUSD (dev / demo use)
+app.get('/test-signal', async (req, res) => {
+  const raw = 'DEMO,XAUUSD,buy,dollarrisk=15,entry=2345.50,sl=2340.20,tp1=2350.80,pct1=0.33,tp2=2354.10,pct2=0.50,tp3=2358.40,betrig=52,bedist=5,trtrig=2,trdist=15,trstep=5,signal_type=SYNC4,conf=78,py'
+  const sig = parseTradeSgnl(raw)
+  if (!sig) return res.status(500).json({ error: 'Test signal parse failed' })
+
+  const enriched = {
+    ...sig,
+    direction: 'LONG',
+    trade_id: `TRK-${Date.now()}`,
+    received_at: new Date().toISOString(),
+    risk_math: validateRisk('XAUUSD', sig.entry, sig.sl)
+  }
+
+  state.recent_signals.unshift(enriched)
+  if (state.recent_signals.length > 20) state.recent_signals.pop()
+  state.active_signal = enriched
+  state.today.total_sigs++
+
+  broadcast('signal_new', enriched)
+
+  // Run Claude analysis and send Telegram
+  const analysis = await analyzeSignal(enriched).catch(() => ({
+    verdict: 'EXECUTE', edge_note: 'Demo signal — SYNC4 confluence confirmed', max_tp: 'HOLDER_MODE', confidence: 78
+  }))
+  const tgMsg  = formatSignalTelegram(enriched, analysis)
+  const tgSent = await sendTelegram(tgMsg)
+
+  if (analysis) broadcast('signal_analysis', { trade_id: enriched.trade_id, analysis })
+  console.log('[TEST] Demo signal fired — Telegram:', tgSent?.ok ? 'sent' : 'skipped/error')
+  res.json({ ok: true, signal: enriched, analysis, telegram: tgSent?.ok ? 'sent' : 'skipped' })
 })
 
 // SSE stream
@@ -570,6 +744,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 app.listen(PORT, () => {
+  const hasTg = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID)
   console.log(`\n🚀 ABSOLUTE DOLLAR TERMINAL`)
   console.log(`   Server: http://localhost:${PORT}`)
   console.log(`   Webhooks:`)
@@ -579,7 +754,9 @@ app.listen(PORT, () => {
   console.log(`   Stream:  GET  /terminal/stream`)
   console.log(`   State:   GET  /api/state`)
   console.log(`   Claude:  POST /api/research`)
-  console.log(`   DB: ${db ? 'PostgreSQL connected' : 'In-memory mode'}`)
-  console.log(`   Claude: ${anthropic ? 'API ready' : 'No API key'}`)
+  console.log(`   Test:    GET  /test-signal`)
+  console.log(`   DB:      ${db ? 'PostgreSQL connected' : 'In-memory mode'}`)
+  console.log(`   Claude:  ${anthropic ? 'API ready' : 'No API key — set ANTHROPIC_API_KEY'}`)
+  console.log(`   Telegram:${hasTg ? ' Bot active' : ' Disabled — set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID'}`)
   console.log()
 })
