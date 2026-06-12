@@ -218,7 +218,20 @@ rsi_extreme_bear      = input.int(30,"Smart Bear RSI ≤",group=grpConf,minval=2
 use_m5_rsi_confirm    = input.bool(true,"M5 RSI Confirmation",group=grpConf)
 
 // ── TRADESGNL AUTOMATION ──────────────────────────────────────────────────────
-// Super Payload: betrig/trtrig/trdist/trstep sent at entry — EA self-manages BE and trail.
+grpTS_auto     = "🤖 TradeSgnl Automation"
+ts_be_on_tp1   = input.bool(true, "✅ Auto BE on TP1 Hit",  group=grpTS_auto,
+     tooltip="Sends modifybuy/sell to move SL to entry + buffer when TP1 is hit.")
+ts_trail_on_tp2 = input.bool(true,"✅ Auto Trail on TP2 Hit",group=grpTS_auto,
+     tooltip="Sends trailing stop modify when TP2 is hit. EA manages the trail on MT5.")
+ts_be_buffer_pts = input.float(5.0,"BE Buffer (pts beyond entry)",group=grpTS_auto,step=0.5)
+ts_long_be_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,sl_price={{be_price}}",
+     "Long BE Modify",group=grpTS_auto)
+ts_short_be_msg = input.string("LICENSE_ID,{{ticker}},modifysell,sl_price={{be_price}}",
+     "Short BE Modify",group=grpTS_auto)
+ts_long_trail_msg  = input.string("LICENSE_ID,{{ticker}},modifybuy,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Long Trail Modify",group=grpTS_auto)
+ts_short_trail_msg = input.string("LICENSE_ID,{{ticker}},modifysell,trail=1,trail_start={{trail_start}},trail_step={{trail_step}}",
+     "Short Trail Modify",group=grpTS_auto)
 
 // ── RISK MANAGEMENT ───────────────────────────────────────────────────────────
 grpRisk        = "💰 Risk Management"
@@ -420,13 +433,13 @@ lq_labelSize      = input.string('Tiny', 'Labels Size',
 // ===========================================================================
 // TradeSgnl Alert Configuration
 // ===========================================================================
-long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1,betrig={{be_pips}},trtrig=2,trdist={{trdist}},trstep={{trstep}}", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
+long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
 long_tp1_message    = input.string("", "Long TP1 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 long_tp2_message    = input.string("", "Long TP2 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_tp3_message    = input.string("", "Long TP3 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_exit_message   = input.string("LICENSE_ID,{{ticker}},closebuy", "Long Exit Message",   group="TradeSgnl Alert Messages", tooltip="Message sent when SL or Trail Exit triggers.")
 
-short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1,betrig={{be_pips}},trtrig=2,trdist={{trdist}},trstep={{trstep}}", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
+short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
 short_tp1_message   = input.string("", "Short TP1 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 short_tp2_message   = input.string("", "Short TP2 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
 short_tp3_message   = input.string("", "Short TP3 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
@@ -471,9 +484,6 @@ f_format_alert(string template, float vol, float sl, float tp1, float tp2, float
         res := str.replace_all(res, "{{tp1}}", f_alert_p(tp1))
         res := str.replace_all(res, "{{tp2}}", f_alert_p(tp2))
         res := str.replace_all(res, "{{tp3}}", f_alert_p(tp3))
-        res := str.replace_all(res, "{{be_pips}}", str.tostring(locked_be_pips, "#"))
-        res := str.replace_all(res, "{{trdist}}", str.tostring(locked_trdist, "#"))
-        res := str.replace_all(res, "{{trstep}}", str.tostring(locked_trstep, "#"))
     res
 
 // ── ASSET CONTRACT NOTIONAL ROUTER ───────────────────────────────────────────
@@ -1260,9 +1270,6 @@ var float locked_sl            = na
 var float locked_risk_dist     = na
 var float locked_position_size = na
 var float locked_actual_risk   = na
-var float locked_be_pips       = na
-var float locked_trdist        = na
-var float locked_trstep        = na
 var int   trade_direction      = 0
 var bool  trade_active         = false
 
@@ -1296,9 +1303,6 @@ if buy_signal_confirmed
     locked_tp3           := close + risk_dist * 2.0
     locked_position_size := _get_position_size(risk_dist)
     locked_actual_risk   := _risk_at_min_lot(risk_dist)
-    locked_be_pips       := math.round(_pips(risk_dist))
-    locked_trdist        := math.round(_pips(risk_atr * 1.5))
-    locked_trstep        := math.round(_pips(risk_atr * 0.5))
     box.delete(pos_loss_box)
     line.delete(pos_mid_line)
     line.delete(pos_tp1_line)
@@ -1323,9 +1327,6 @@ else if sell_signal_confirmed
     locked_tp3           := close - risk_dist * 2.0
     locked_position_size := _get_position_size(risk_dist)
     locked_actual_risk   := _risk_at_min_lot(risk_dist)
-    locked_be_pips       := math.round(_pips(risk_dist))
-    locked_trdist        := math.round(_pips(risk_atr * 1.5))
-    locked_trstep        := math.round(_pips(risk_atr * 0.5))
     box.delete(pos_loss_box)
     line.delete(pos_mid_line)
     line.delete(pos_tp1_line)
@@ -3002,6 +3003,27 @@ if long_tp3_confirmed
 
 if long_exit_confirmed
     strategy.close("Long", comment="Long Exit", alert_message=f_format_alert(long_exit_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
+
+// ── TradeSgnl Automation: Auto-BE on TP1, Auto-Trail on TP2 ─────────────────
+if long_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry + ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_long_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if short_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
+    float _be = locked_entry - ts_be_buffer_pts * syminfo.mintick * 10
+    alert(f_format_modify(ts_short_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
+
+if long_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_long_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
+
+if short_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
+    float _atr_now   = ta.atr(14)
+    float _t_start   = _atr_now * 1.5
+    float _t_step    = _atr_now * 0.5
+    alert(f_format_modify(ts_short_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
 
 if short_tp1_confirmed
     strategy.close("Short", qty_percent=33.3, comment="Short TP1", alert_message=f_format_alert(short_tp1_message, locked_position_size, locked_sl, locked_tp1, locked_tp2, locked_tp3, locked_actual_risk))
