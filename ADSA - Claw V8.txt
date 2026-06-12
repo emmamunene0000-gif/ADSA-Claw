@@ -433,13 +433,13 @@ lq_labelSize      = input.string('Tiny', 'Labels Size',
 // ===========================================================================
 // TradeSgnl Alert Configuration
 // ===========================================================================
-long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
+long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,dollarrisk={{risk}},entry={{entry}},sl={{sl}},tp1={{tp1}},pct1=0.33,tp2={{tp2}},pct2=0.50,tp3={{tp3}},betrig={{be_pips}},bedist={{bedist}},trtrig=2,trdist={{trdist}},trstep={{trstep}},signal_type={{tag}},conf={{conf}},py", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
 long_tp1_message    = input.string("", "Long TP1 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 long_tp2_message    = input.string("", "Long TP2 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_tp3_message    = input.string("", "Long TP3 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_exit_message   = input.string("LICENSE_ID,{{ticker}},closebuy", "Long Exit Message",   group="TradeSgnl Alert Messages", tooltip="Message sent when SL or Trail Exit triggers.")
 
-short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
+short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,dollarrisk={{risk}},entry={{entry}},sl={{sl}},tp1={{tp1}},pct1=0.33,tp2={{tp2}},pct2=0.50,tp3={{tp3}},betrig={{be_pips}},bedist={{bedist}},trtrig=2,trdist={{trdist}},trstep={{trstep}},signal_type={{tag}},conf={{conf}},py", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
 short_tp1_message   = input.string("", "Short TP1 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 short_tp2_message   = input.string("", "Short TP2 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
 short_tp3_message   = input.string("", "Short TP3 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
@@ -475,15 +475,31 @@ f_alert_p(float val) =>
         float t = math.abs(val)
         t >= 100 ? str.tostring(val, "#.##") : t >= 2 ? str.tostring(val, "#.####") : str.tostring(val, "#.#####")
 
+// Must be declared before f_format_alert so the function can reference them
+var float  locked_entry    = na
+var float  locked_be_pips  = na
+var float  locked_bedist   = na
+var float  locked_trdist   = na
+var float  locked_trstep   = na
+var float  locked_conf     = na
+var string locked_sig_type = ""
+
 f_format_alert(string template, float vol, float sl, float tp1, float tp2, float tp3, float risk) =>
     string res = template
     if res != ""
         res := str.replace_all(res, "{{vol}}", str.tostring(vol, "#.####"))
         res := str.replace_all(res, "{{risk}}", str.tostring(risk, "#.##"))
+        res := str.replace_all(res, "{{entry}}", f_alert_p(locked_entry))
         res := str.replace_all(res, "{{sl}}", f_alert_p(sl))
         res := str.replace_all(res, "{{tp1}}", f_alert_p(tp1))
         res := str.replace_all(res, "{{tp2}}", f_alert_p(tp2))
         res := str.replace_all(res, "{{tp3}}", f_alert_p(tp3))
+        res := str.replace_all(res, "{{be_pips}}", str.tostring(locked_be_pips, "#"))
+        res := str.replace_all(res, "{{bedist}}", str.tostring(locked_bedist, "#"))
+        res := str.replace_all(res, "{{trdist}}", str.tostring(locked_trdist, "#"))
+        res := str.replace_all(res, "{{trstep}}", str.tostring(locked_trstep, "#"))
+        res := str.replace_all(res, "{{tag}}", locked_sig_type)
+        res := str.replace_all(res, "{{conf}}", str.tostring(locked_conf, "##"))
     res
 
 // ── ASSET CONTRACT NOTIONAL ROUTER ───────────────────────────────────────────
@@ -1262,7 +1278,6 @@ vp_vaLevels   = vpEnabled and not na(vp_currentPOC) ? vp_valueLevels(vp_currentP
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 14 — PLATINUM RISK MODEL & TRADE SETUP LOCKING
 // ══════════════════════════════════════════════════════════════════════════════
-var float locked_entry         = na
 var float locked_tp1           = na
 var float locked_tp2           = na
 var float locked_tp3           = na
@@ -1303,6 +1318,11 @@ if buy_signal_confirmed
     locked_tp3           := close + risk_dist * 2.0
     locked_position_size := _get_position_size(risk_dist)
     locked_actual_risk   := _risk_at_min_lot(risk_dist)
+    locked_be_pips       := math.round(_pips(risk_dist))
+    locked_bedist        := math.round(_pips(ts_be_buffer_pts * syminfo.mintick * 10))
+    locked_trdist        := math.round(_pips(risk_atr * 1.5))
+    locked_trstep        := math.round(_pips(risk_atr * 0.5))
+    locked_sig_type      := master_sync_buy ? "SYNC4" : sovereign_counter_buy ? "COUNTER" : "LOCAL"
     box.delete(pos_loss_box)
     line.delete(pos_mid_line)
     line.delete(pos_tp1_line)
@@ -1327,6 +1347,11 @@ else if sell_signal_confirmed
     locked_tp3           := close - risk_dist * 2.0
     locked_position_size := _get_position_size(risk_dist)
     locked_actual_risk   := _risk_at_min_lot(risk_dist)
+    locked_be_pips       := math.round(_pips(risk_dist))
+    locked_bedist        := math.round(_pips(ts_be_buffer_pts * syminfo.mintick * 10))
+    locked_trdist        := math.round(_pips(risk_atr * 1.5))
+    locked_trstep        := math.round(_pips(risk_atr * 0.5))
+    locked_sig_type      := master_sync_sell ? "SYNC4" : sovereign_counter_sell ? "COUNTER" : "LOCAL"
     box.delete(pos_loss_box)
     line.delete(pos_mid_line)
     line.delete(pos_tp1_line)
@@ -1463,8 +1488,10 @@ bool tp1_alert_event    = tp1_hit  and not tp1_hit[1]  and barstate.isconfirmed
 bool tp2_alert_event    = tp2_hit  and not tp2_hit[1]  and barstate.isconfirmed
 bool tp3_alert_event    = tp3_hit  and not tp3_hit[1]  and barstate.isconfirmed
 bool sl_alert_event     = sl_hit_flag and not sl_hit_flag[1] and barstate.isconfirmed
-bool holder_exit_long   = holder_mode_active and trade_direction ==  1 and ta.crossunder(close, active_trail) and barstate.isconfirmed
-bool holder_exit_short  = holder_mode_active and trade_direction == -1 and ta.crossover(close, active_trail)  and barstate.isconfirmed
+bool _trail_crossunder  = ta.crossunder(close, active_trail)
+bool _trail_crossover   = ta.crossover(close, active_trail)
+bool holder_exit_long   = holder_mode_active and trade_direction ==  1 and _trail_crossunder and barstate.isconfirmed
+bool holder_exit_short  = holder_mode_active and trade_direction == -1 and _trail_crossover  and barstate.isconfirmed
 bool holder_exit_event  = (holder_exit_long or holder_exit_short) and not na(active_trail)
 bool rejection_alert    = (buy_rejected or sell_rejected) and barstate.isconfirmed
 
@@ -2115,6 +2142,11 @@ string claw_conf_str = buy_signal_confirmed  ? str.tostring(claw_bull_conf,"##")
                        sell_signal_confirmed ? str.tostring(claw_bear_conf,"##") + "%" :
                        claw_exec_bull ? str.tostring(claw_bull_conf,"##") + "% bull" :
                        claw_exec_bear ? str.tostring(claw_bear_conf,"##") + "% bear" : "—"
+
+if buy_signal_confirmed
+    locked_conf := claw_bull_conf
+else if sell_signal_confirmed
+    locked_conf := claw_bear_conf
 
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 21 — PIP TRACKER (DAILY RESET, ACTUAL vs EXPECTED)
@@ -3014,15 +3046,15 @@ if short_tp1_confirmed and ts_be_on_tp1 and not na(locked_entry)
     alert(f_format_modify(ts_short_be_msg, syminfo.ticker, _be, 0.0, 0.0), alert.freq_once_per_bar_close)
 
 if long_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
-    float _atr_now   = ta.atr(14)
-    float _t_start   = _atr_now * 1.5
-    float _t_step    = _atr_now * 0.5
+    float _atr_now = ta.atr(14)
+    float _t_start = _atr_now * 1.5
+    float _t_step  = _atr_now * 0.5
     alert(f_format_modify(ts_long_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
 
 if short_tp2_confirmed and ts_trail_on_tp2 and not na(locked_entry)
-    float _atr_now   = ta.atr(14)
-    float _t_start   = _atr_now * 1.5
-    float _t_step    = _atr_now * 0.5
+    float _atr_now = ta.atr(14)
+    float _t_start = _atr_now * 1.5
+    float _t_step  = _atr_now * 0.5
     alert(f_format_modify(ts_short_trail_msg, syminfo.ticker, 0.0, _t_start, _t_step), alert.freq_once_per_bar_close)
 
 if short_tp1_confirmed
