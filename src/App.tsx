@@ -5,7 +5,7 @@ import SignalFeed from './components/SignalFeed'
 import MessageFeed from './components/MessageFeed'
 import WatchlistGrid from './components/WatchlistGrid'
 import { useSSE } from './hooks/useSSE'
-import { TerminalState, Signal, GlassBoxMessage, DashboardState, TodayStats } from './types'
+import { TerminalState, Signal, GlassBoxMessage, DashboardState, TodayStats, ClaudeAnalysis } from './types'
 
 function emptyState(): TerminalState {
   return {
@@ -86,6 +86,15 @@ export default function App() {
       setState(prev => ({
         ...prev,
         recent_messages: [msg, ...prev.recent_messages].slice(0, 50)
+      }))
+    },
+    signal_analysis: (data: unknown) => {
+      const { trade_id, analysis } = data as { trade_id: string; analysis: ClaudeAnalysis }
+      setState(prev => ({
+        ...prev,
+        recent_signals: prev.recent_signals.map(s =>
+          s.trade_id === trade_id ? { ...s, claude_analysis: analysis } : s
+        )
       }))
     },
     message_analysis: (data: unknown) => {

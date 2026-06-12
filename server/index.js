@@ -484,7 +484,7 @@ app.post('/webhook/signal', async (req, res) => {
     direction,
     trade_id: sig.trade_id || `TRK-${Date.now()}`,
     received_at: new Date().toISOString(),
-    risk_math: validateRisk(sig.symbol, sig.entry_price, sig.sl_price)
+    risk_math: validateRisk(sig.symbol, sig.entry, sig.sl)
   }
 
   // Keep last 20 signals

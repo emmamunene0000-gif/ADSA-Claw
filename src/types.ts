@@ -42,20 +42,37 @@ export interface TodayStats {
   london_cnt: number; ny_cnt: number; asia_cnt: number
 }
 
+// Super-payload signal fields (TradeSgnl EA format, ADSA v8.1+)
 export interface Signal {
   trade_id: string
   symbol: string
-  action: string
-  direction: string
-  sl_price: number
-  tp1_price: number; tp2_price: number; tp3_price: number
-  pct1: number; pct2: number
+  action: string        // buy | sell | closebuy | closesell
+  direction: string     // LONG | SHORT
+  license?: string
+  // Prices (super payload field names)
+  entry?: number
+  sl?: number
+  tp1?: number; tp2?: number; tp3?: number
+  pct1?: number; pct2?: number
+  // Dollar risk (EA calculates lots from this)
+  dollarrisk?: number
+  // BE / trail params
+  betrig?: number       // pips to move to BE
+  bedist?: number       // BE buffer pips
+  trtrig?: number       // trail trigger multiplier
+  trdist?: number       // trail distance pips
+  trstep?: number       // trail step pips
+  // Classification
+  signal_type?: string  // SYNC4 | COUNTER | LOCAL
+  conf?: number         // confidence %
+  // Metadata
   score?: number
   master_bias?: string
   session?: string
   status?: string
   received_at: string
   risk_math?: RiskMath
+  claude_analysis?: ClaudeAnalysis
 }
 
 export interface RiskMath {
