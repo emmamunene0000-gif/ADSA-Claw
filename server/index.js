@@ -108,14 +108,18 @@ function parseTradeSgnl(str) {
   if (!str || typeof str !== 'string') return null
   const parts = str.trim().split(',')
   if (parts.length < 3) return null
-  const sig = { license: parts[0], symbol: parts[1], action: parts[2] }
+  const sig = { license: parts[0].trim(), symbol: parts[1].trim(), action: parts[2].trim() }
   for (let i = 3; i < parts.length; i++) {
     const idx = parts[i].indexOf('=')
     if (idx === -1) continue
     const k = parts[i].slice(0, idx).trim()
     const v = parts[i].slice(idx + 1).trim()
+    // Reject unresolved Pine Script placeholders — signal fired before values were ready
+    if (v.startsWith('{{') && v.endsWith('}}')) continue
     sig[k] = isNaN(Number(v)) ? v : Number(v)
   }
+  // If critical price fields are missing for entry signals, treat as malformed
+  if (['buy', 'sell'].includes(sig.action) && (!sig.entry || !sig.sl)) return null
   return sig
 }
 
