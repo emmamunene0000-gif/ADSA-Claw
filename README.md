@@ -1,6 +1,54 @@
-# ADSA v8.0 — Agent Architecture & Execution Deconstruction
+# ADSA v8.1 — Agent Architecture & Glass Box Deconstruction
 
-> **Purpose of this document:** Surgical reverse-engineering of every rule, metric, output string, and communication produced by the Absolute Dollar Supreme Agent. Every piece of text in the dashboard and every Telegram message is traced to its exact Pine Script source. This serves as the migration blueprint for the Replit + Claude terminal.
+> **Purpose of this document:** Surgical reverse-engineering of every rule, metric, output string, and communication produced by the Absolute Dollar Supreme Agent (ADSA). Every piece of text in the dashboard and every Telegram message is traced to its exact Pine Script source. This is both a migration blueprint for the Replit + Claude terminal **and** a living internal reference — updated in lockstep with the script.
+
+---
+
+## 0. Script Identity (Pine Header / Footer)
+
+```
+CODENAME  : ABSOLUTE DOLLAR AGENT (ADA)
+EDITION   : Super Admin — Invite Only
+VERSION   : Pine Script v6 — Supreme Merge Build | Claw Protocol Edition
+STRATEGY  : //@version=6 strategy(...)
+```
+
+### 24 Active Subsystems
+
+| # | Subsystem |
+|---|---|
+| 1 | Fractal 4-Layer Consensus (Sovereign D / Anchor H4 / Filter M15 / Exec 1m) |
+| 2 | Composite 5-Timeframe Scoring Engine (+15 to -15) |
+| 3 | Glass Box Alert Architecture (rich reasoning per event) |
+| 4 | Trade Progression Engine (TP1/TP2/TP3/Holder Mode) |
+| 5 | SL Autopsy Engine (contextual transparent loss narrative) |
+| 6 | Signal Rejection Reports (regime filter explainer) |
+| 7 | SMC Engine (BOS/CHoCH/OB/FVG/EQH-EQL/Premium-Discount/Liquidity) |
+| 8 | Adaptive VWAP + Volume Profile + Fibonacci Bands |
+| 9 | Platinum Risk Model (auto SL/TP + real-world asset-routed sizing) |
+| 10 | Dual Telegram Broadcast (Premium War Room + Public Channel) |
+| 11 | Super Admin Control Panel (Bias/Silence/Override/Asset Note) |
+| 12 | Trade ID Engine (ATM-YYYYMMDD-HHMM-DIR-N) |
+| 13 | Pip Tracker (actual vs expected, daily reset, profit factor) |
+| 14 | Performance Table (5-col dual table with ELITE/STRONG ratings) |
+| 15 | Daily Report Engine (full trade log + ML data block) |
+| 16 | Live Dollar P&L Tracker (quote-currency, per-bar update) |
+| 17 | PDH/PDL Context Engine + Tree-Format AI Narrative |
+| 18 | Claw Liquidity Trail Engine (MTF: M5/M15/H1 direction) |
+| 19 | Confidence Engine (weighted 6-factor gate, Claw Mode) |
+| 20 | Smart RSI Momentum Signals (extreme zone 75+/25-) |
+| 21 | Fib Trend Gate (optional regime gate, builds confidence) |
+| 22 | TradeSgnl BE + Trail Automation (auto-modify on TP1/TP2) |
+| 23 | Orphan Trade Fix + Net Pips Tracker (exit_px/net_pips logged) |
+| 24 | Signal Holder Mode (34-period signal line as runner kill switch) |
+
+### v8.1 Changes (Absolute Dollar Terminal Build)
+
+| Addition | What changed |
+|---|---|
+| 9 | Super Payload: full TradeSgnl confirmed format with entry, bedist, signal_type, conf, py |
+| 10 | Signal Holder Mode: VWAP replaced by 34-period signal line as kill switch |
+| 11 | Net Pips Tracker: dpt_exit_px + dpt_net_pips — every trade logged with signed P&L at exit |
 
 ---
 
@@ -423,9 +471,59 @@ TP2 hit: tp1_hit     AND (long: high ≥ locked_tp2  / short: low ≤ locked_tp2
 TP3 hit: tp2_hit     AND (long: high ≥ locked_tp3  / short: low ≤ locked_tp3)
 SL hit:  not tp1_hit AND (long: low  ≤ locked_sl   / short: high ≥ locked_sl)
 
-Holder exit (VWAP): crossunder(close, vap_current)   ← long
-                    crossover(close, vap_current)    ← short
-Holder exit (Structural): crossunder(close, holder_trail)  ← pivot low trail
+Holder exit (Signal):     crossunder(close, signal)        ← long  (34-period SMA/EMA)
+                          crossover(close, signal)         ← short
+Holder exit (Structural): crossunder(close, holder_trail)  ← pivot low trail long
+                          crossover(close, holder_trail)   ← pivot high trail short
+```
+
+### Holder Mode Kill Switch — Signal Line (Subsystem 24)
+
+The **34-period Signal line** (SMA or EMA of `_bclose`, configurable) is the primary holder mode exit:
+
+```pine
+signal_length = 34                     // input.int, default changed from 21
+signal = sma_signal ? ta.sma(_bclose, 34) : ta.ema(_bclose, 34)
+
+// When holder_trail_type = "Signal":
+active_trail = signal
+
+// Exit fires when:
+holder_exit_long  = holder_mode_active AND crossunder(close, signal) AND barstate.isconfirmed
+holder_exit_short = holder_mode_active AND crossover(close, signal)  AND barstate.isconfirmed
+```
+
+**Rationale:** The signal line is the backbone of the ATM Bot (the same line that generates entry crossovers). Using it as the runner kill switch means the runner exits exactly when the same momentum that created the entry fully reverses — a clean mechanical rule with no discretion.
+
+### Orphan Trade Fix + Net Pips Tracker (Subsystem 23)
+
+An **orphan trade** occurs when a new signal fires in the opposite direction while a trade is still tracked as open (no TP1 hit, no SL hit). Without this fix, the original trade lingers in `dpt` arrays with no exit price, corrupting performance stats.
+
+**Fix logic** (runs inside `if buy_signal_confirmed or sell_signal_confirmed`):
+
+```pine
+if is_trade_running AND dpt_active_idx >= 0:
+    _was_t1 = dpt_tp1_hit[dpt_active_idx]
+    if not _was_t1:
+        dpt_sl_hit[idx] = true          // counted as a loss (conservative)
+    dpt_exit_px[idx]  = close           // actual exit price at reversal bar
+    dpt_net_pips[idx] = round(_pips(direction * (close - entry_px)))
+    dpt_active_idx = -1
+```
+
+**Net pips tracking — all exit paths:**
+
+| Exit event | `dpt_exit_px` | `dpt_net_pips` |
+|---|---|---|
+| SL hit | `locked_sl` | `direction × _pips(locked_sl − entry_px)` |
+| Holder exit (Signal/Structural) | `close` at exit bar | `direction × _pips(close − entry_px)` |
+| Orphan reversal | `close` at new signal bar | `direction × _pips(close − entry_px)` |
+
+**Daily trade log line** (in daily report):
+```
+1. 🟢L [SYNC4] Sc:12.0 TP2✅ net:+87.3pts pk:91.2pts 34bars
+2. 🔴S [LOCAL] Sc:4.0  SL❌  net:-45.1pts pk:23.4pts 8bars
+3. 🟢L [COUNTER] Sc:3.0 OPEN⏳ net:— pk:12.0pts 3bars
 ```
 
 ### Partial Close Rules (Pine strategy → EA via pct)
@@ -465,19 +563,18 @@ LICENSE_ID,{{ticker}},{{action}},dollarrisk={{risk}},entry={{entry}},sl={{sl}},t
 | `pct2=0.50` | hardcoded | `pct2=0.50` | Close 50% at TP2 |
 | `tp3={{tp3}}` | `locked_tp3` | `tp3=4242.59` | TP3 absolute price |
 | `betrig={{betrig}}` | `locked_be_pips` = `round(_pips(risk_dist))` | `betrig=122` | Auto-BE after 122 pips profit |
-| `bedist={{bedist}}` | `ts_be_buffer_pts` converted to pips | `bedist=5` | BE buffer: SL → entry + 5 pts |
-| `trtrig={{trtrig}}` | hardcoded `2` | `trtrig=2` | Activate trail when TP2 closes |
-| `trdist={{trdist}}` | `round(_pips(risk_atr × 1.5))` | `trdist=36` | Trail distance: 1.5× ATR pips |
-| `trstep={{trstep}}` | `round(_pips(risk_atr × 0.5))` | `trstep=12` | Trail step: 0.5× ATR pips |
-| `signal_type={{tag}}` | `_sig_type` = SYNC4/COUNTER/LOCAL | `signal_type=LOCAL` | Signal classification |
-| `conf={{conf}}` | `claw_bull_conf` or `claw_bear_conf` | `conf=54` | Confidence percentage |
-| `exent=1` | hardcoded | `exent=1` | Reverse/close on new opposite signal |
+| `bedist={{bedist}}` | `locked_bedist` = `round(_pips(ts_be_buffer_pts × mintick × 10))` | `bedist=5` | BE buffer: 5 pips beyond entry |
+| `trtrig=2` | hardcoded | `trtrig=2` | Activate trail when TP2 closes (trig level 2) |
+| `trdist={{trdist}}` | `locked_trdist` = `round(_pips(risk_atr × 1.5))` | `trdist=36` | Trail distance: 1.5× ATR pips |
+| `trstep={{trstep}}` | `locked_trstep` = `round(_pips(risk_atr × 0.5))` | `trstep=12` | Trail step: 0.5× ATR pips |
+| `signal_type={{tag}}` | `locked_sig_type` = SYNC4/COUNTER/LOCAL (set at entry bar) | `signal_type=LOCAL` | Signal classification |
+| `conf={{conf}}` | `locked_conf` = `claw_bull/bear_conf` (locked after Confidence Engine) | `conf=54` | Claw confidence % |
 | `py` | hardcoded | `py` | Pyramiding mode enabled |
 
 ### Real Example (from screenshot trade)
 
 ```
-ADX-2026,XAUUSD,buy,dollarrisk=15,entry=4218.17,sl=4205.96,tp1=4230.38,pct1=0.33,tp2=4236.48,pct2=0.50,tp3=4242.59,betrig=122,bedist=5,trtrig=2,trdist=36,trstep=12,signal_type=LOCAL,conf=54,exent=1,py
+ADX-2026,XAUUSD,buy,dollarrisk=15,entry=4218.17,sl=4205.96,tp1=4230.38,pct1=0.33,tp2=4236.48,pct2=0.50,tp3=4242.59,betrig=122,bedist=5,trtrig=2,trdist=36,trstep=12,signal_type=LOCAL,conf=54,py
 ```
 
 ### EA Configuration Required
@@ -491,6 +588,10 @@ ADX-2026,XAUUSD,buy,dollarrisk=15,entry=4218.17,sl=4205.96,tp1=4230.38,pct1=0.33
 ## 11. TS Automation — Belt-and-Suspenders
 
 **Source:** Section 30 — BE/trail alert blocks after `long_exit_confirmed`
+
+> **Do you need to fill in the BE Modify / Trail Modify message fields?**
+>
+> With the super payload (fire-and-forget), the EA already has `betrig=`, `bedist=`, `trtrig=`, `trdist=`, `trstep=` in the entry webhook and manages BE/trail autonomously. The Pine-side alerts on TP1/TP2 are **optional belt-and-suspenders** — they re-confirm the same modification in case the entry payload's automation wasn't enough. Leave them filled with the default templates if you want redundancy. Leave them blank if you trust the EA's super payload automation alone. Having both is harmless — a redundant modify has no visible effect if BE is already active.
 
 These fire **separate modify alerts** on TP1/TP2 events, confirming/overriding the Super Payload's auto-rules.
 
@@ -539,7 +640,7 @@ trail_step  = _atr_now × 0.5
 | 🎯🎯 TP2 HIT — MOVE STOP TO BREAKEVEN (1.5:1) | tp2_alert_event | 4 |
 | 🚀 TP3 HIT — HOLDER MODE ACTIVATED (2:1) | tp3_alert_event | 4 |
 | 💀 STOP HIT — GLASS BOX AUTOPSY | sl_alert_event | 4 |
-| 🏁 HOLDER MODE EXIT — VWAP CROSSED | holder_exit_event | 4 |
+| 🏁 HOLDER MODE EXIT — [Signal/Structural] CROSSED | holder_exit_event | 4 |
 | ⛔ SIGNAL BLOCKED — REGIME FILTER | rejection_alert | 5 |
 | ⚠️ BUY-SIDE LIQUIDITY SWEPT | crossover(close, ph_top) | 6 |
 | ⚠️ SELL-SIDE LIQUIDITY SWEPT | crossunder(close, pl_btm) | 6 |
@@ -802,7 +903,7 @@ Every line in the dashboard mapped to its Pine Script origin.
 | `TP1: 4230.38 ✅` | `locked_tp1`, `tp1_hit ? "✅" : ""` |
 | `TP2/TP3 rows` | Same pattern |
 | `Peak: 78.1 pts` | `max_profit_pips` |
-| `🔱 VWAP Trail: 4221.xx` | `vap_current` when holder_mode_active |
+| `🔱 Signal Trail: 4221.xx` | `active_trail` (= `signal` when holder_trail_type = "Signal") |
 
 ### Today Block
 
@@ -835,6 +936,47 @@ pip_win_rate  = wins / total_signals × 100
 pip_pf        = gross_wins_pips / gross_loss_pips
 pip_net       = gross_wins_pips - gross_loss_pips
 ```
+
+### DPT Arrays — Per-Trade Record (Section 22)
+
+Each signal pushes one row to all dpt arrays. Cleared on new trading day.
+
+| Array | Type | Populated at | Description |
+|---|---|---|---|
+| `dpt_dir` | int | Signal bar | 1 = long, -1 = short |
+| `dpt_type` | string | Signal bar | SYNC4 / COUNTER / LOCAL |
+| `dpt_sess` | string | Signal bar | LDN / NY / ASIA |
+| `dpt_score` | float | Signal bar | `total_score` at entry |
+| `dpt_entry_px` | float | Signal bar | `locked_entry` (= close) |
+| `dpt_exit_px` | float | Exit event | Actual close price at exit |
+| `dpt_net_pips` | float | Exit event | Signed pips: + = winner, − = loser |
+| `dpt_tp1_hit` | bool | TP1 event | — |
+| `dpt_tp2_hit` | bool | TP2 event | — |
+| `dpt_tp3_hit` | bool | TP3 event | — |
+| `dpt_sl_hit` | bool | SL/orphan | — |
+| `dpt_max_pips` | float | Per bar | Maximum favorable excursion |
+| `dpt_bar_count` | int | Per bar | Bars alive |
+
+### Net Pips — How it's computed
+
+```
+exit_price (SL)      = locked_sl
+exit_price (holder)  = close at holder_exit_event bar
+exit_price (orphan)  = close at new-signal reversal bar
+
+net_pips = round( _pips( direction × (exit_price − entry_price) ), 1 )
+
+direction = +1 for long, -1 for short
+```
+
+A long trade that entered at 4218 and exited at 4205 (SL): `_pips(1 × (4205 − 4218))` = `-130 pts`.
+A short trade that entered at 4226 and reversed at 4220: `_pips(−1 × (4220 − 4226))` = `+60 pts`.
+
+### Why orphan trades were corrupting performance stats
+
+Before the fix: when a sell signal fired while a long was open, the long trade had no exit price in `dpt`. The `dpt_sl_hit` was marked `true` (conservative) but `dpt_exit_px` and `dpt_net_pips` were `na`. The daily report showed `SL❌` with no pip count — making it impossible to calculate true daily P&L or distinguish a 1-pip reversal from a full SL hit.
+
+After the fix: the reversal bar's `close` is recorded as `exit_px` and the exact pip delta is logged. The daily report line shows: `net:-45.1pts` so you can track every cent.
 
 ### Performance Table Columns
 

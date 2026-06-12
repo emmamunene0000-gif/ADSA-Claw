@@ -30,7 +30,8 @@
 // ║  [20] *** NEW: Smart RSI Momentum Signals (extreme zone 75+/25-)             ║
 // ║  [21] *** NEW: Fib Trend Gate (optional, like VWAP — builds confidence)      ║
 // ║  [22] *** NEW: TradeSgnl BE + Trail Automation (auto-modify on TP1/TP2)      ║
-// ║  [23] *** NEW: Orphan Trade Fix (dpt reversal close on new signal)           ║
+// ║  [23] *** NEW: Orphan Trade Fix + Net Pips Tracker (exit_px/net_pips logged) ║
+// ║  [24] *** NEW: Signal Holder Mode (34-period signal as runner kill switch)   ║
 // ╠══════════════════════════════════════════════════════════════════════════════╣
 // ║  MERGE LOG v7.0 — SUPREME AGENT ADDITIONS                                  ║
 // ║  [+] Live Dollar P&L on active trade (price_diff × position_size ×        ║
@@ -242,12 +243,12 @@ show_risk_info = input.bool(true,  "Show Min-Unit Actual Risk",        group=grp
      tooltip="Shows estimated dollar risk at minimum trade unit alongside variable sizing.")
 prevent_reversals = input.bool(false, "🚫 Strict One-Trade Rule",       group=grpRisk,
      tooltip="Prevents taking opposing valid signals if the current trade has NOT hit its Stop Loss or Trail Exit. Guaranteeing absolutely no hedging.")
-holder_trail_type = input.string("Structural", "🏃 Holder Mode Trail", options=["VWAP", "Structural"], group=grpRisk,
-     tooltip="Trailing mechanism for remaining runners after TP3 is hit. Structural trails the pivot lows/highs.")
+holder_trail_type = input.string("Structural", "🏃 Holder Mode Trail", options=["Signal", "Structural"], group=grpRisk,
+     tooltip="Trailing mechanism for remaining runners after TP3 is hit. Signal = 34-period smoothing line (kill switch when price crosses it). Structural trails pivot lows/highs.")
 
 // ── LINREG ────────────────────────────────────────────────────────────────────
 grpLinReg     = "📐 LinReg Settings"
-signal_length = input.int(21,    "Signal Smoothing", minval=1, maxval=200, group=grpLinReg)
+signal_length = input.int(34,    "Signal Smoothing", minval=1, maxval=200, group=grpLinReg)
 sma_signal    = input.bool(true,  "Simple MA Signal",                       group=grpLinReg)
 lin_reg       = input.bool(false, "Use LinReg Candles",                     group=grpLinReg,
      tooltip="Warning: LinReg Candles repaint history by definition.")
@@ -1402,10 +1403,13 @@ string pdh_pdl_status =
      "PDH/PDL: Calculating..."
 
 // ── forward-declarations needed by Section 16 (full blocks declared in later sections) ──
-var array<int>  dpt_dir        = array.new<int>()
-var array<bool> dpt_tp1_hit    = array.new<bool>()
-var array<bool> dpt_sl_hit     = array.new<bool>()
-var int         dpt_active_idx = -1
+var array<int>   dpt_dir        = array.new<int>()
+var array<bool>  dpt_tp1_hit    = array.new<bool>()
+var array<bool>  dpt_sl_hit     = array.new<bool>()
+var array<float> dpt_entry_px   = array.new<float>()
+var array<float> dpt_exit_px    = array.new<float>()
+var array<float> dpt_net_pips   = array.new<float>()
+var int          dpt_active_idx = -1
 var float       holder_trail_price = na
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1422,10 +1426,15 @@ var string trade_phase        = "WAITING"
 if buy_signal_confirmed or sell_signal_confirmed
     // ── FIX: close orphaned open trade in dpt when a new signal fires ──
     if is_trade_running and dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
-        bool _was_t1 = array.get(dpt_tp1_hit, dpt_active_idx)
+        bool  _was_t1 = array.get(dpt_tp1_hit, dpt_active_idx)
+        int   _d_old  = array.get(dpt_dir,      dpt_active_idx)
+        float _ep_old = array.get(dpt_entry_px, dpt_active_idx)
+        float _df_old = _d_old == 1 ? 1.0 : -1.0
         if not _was_t1
-            array.set(dpt_sl_hit, dpt_active_idx, true)  // Mark reversal-close as SL (conservative)
-        dpt_active_idx   := -1
+            array.set(dpt_sl_hit, dpt_active_idx, true)
+        array.set(dpt_exit_px,  dpt_active_idx, close)
+        array.set(dpt_net_pips, dpt_active_idx, math.round(_pips(_df_old * (close - _ep_old)), 1))
+        dpt_active_idx := -1
     tp1_hit            := false
     tp2_hit            := false
     tp3_hit            := false
@@ -1472,7 +1481,7 @@ if holder_mode_active
 else
     holder_trail_price := na
 
-float active_trail = holder_trail_type == "VWAP" ? vap_current : holder_trail_price
+float active_trail = holder_trail_type == "Signal" ? signal : holder_trail_price
 
 string trade_phase_display = switch trade_phase
     "WAITING"     => "⚪ SCANNING..."
@@ -2229,11 +2238,10 @@ string pip_unit    = syminfo.type == "forex" ? "pips" : "pts"
 // ══════════════════════════════════════════════════════════════════════════════
 // SECTION 22 — DAILY PERFORMANCE TRACKING (dpt_ arrays)
 // ══════════════════════════════════════════════════════════════════════════════
-// dpt_dir, dpt_tp1_hit, dpt_sl_hit, dpt_active_idx declared before Section 16 (forward-ref fix)
+// dpt_dir, dpt_tp1_hit, dpt_sl_hit, dpt_entry_px, dpt_exit_px, dpt_net_pips, dpt_active_idx declared before Section 16
 var array<float>  dpt_score     = array.new<float>()
 var array<string> dpt_type      = array.new<string>()
 var array<string> dpt_sess      = array.new<string>()
-var array<float>  dpt_entry_px  = array.new<float>()
 var array<bool>   dpt_tp2_hit   = array.new<bool>()
 var array<bool>   dpt_tp3_hit   = array.new<bool>()
 var array<float>  dpt_max_pips  = array.new<float>()
@@ -2253,6 +2261,8 @@ if _new_trading_day
     array.clear(dpt_type)
     array.clear(dpt_sess)
     array.clear(dpt_entry_px)
+    array.clear(dpt_exit_px)
+    array.clear(dpt_net_pips)
     array.clear(dpt_tp1_hit)
     array.clear(dpt_tp2_hit)
     array.clear(dpt_tp3_hit)
@@ -2277,6 +2287,8 @@ if buy_signal_confirmed or sell_signal_confirmed
     array.push(dpt_type,     _sig_type)
     array.push(dpt_sess,     _sig_sess)
     array.push(dpt_entry_px, locked_entry)
+    array.push(dpt_exit_px,  na)
+    array.push(dpt_net_pips, na)
     array.push(dpt_tp1_hit,  false)
     array.push(dpt_tp2_hit,  false)
     array.push(dpt_tp3_hit,  false)
@@ -2312,9 +2324,17 @@ if dpt_active_idx >= 0 and dpt_active_idx < array.size(dpt_dir)
     if tp3_alert_event
         array.set(dpt_tp3_hit, _idx, true)
     if sl_alert_event
-        array.set(dpt_sl_hit, _idx, true)
+        float _d_sl  = array.get(dpt_dir,      _idx) == 1 ? 1.0 : -1.0
+        float _ep_sl = array.get(dpt_entry_px, _idx)
+        array.set(dpt_sl_hit,   _idx, true)
+        array.set(dpt_exit_px,  _idx, locked_sl)
+        array.set(dpt_net_pips, _idx, math.round(_pips(_d_sl * (locked_sl - _ep_sl)), 1))
         dpt_active_idx := -1
     if holder_exit_event
+        float _d_he  = array.get(dpt_dir,      _idx) == 1 ? 1.0 : -1.0
+        float _ep_he = array.get(dpt_entry_px, _idx)
+        array.set(dpt_exit_px,  _idx, close)
+        array.set(dpt_net_pips, _idx, math.round(_pips(_d_he * (close - _ep_he)), 1))
         dpt_active_idx := -1
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2348,7 +2368,7 @@ if trade_active and not na(locked_tp1)
          "\n 🎯 TP1: " + _p(locked_tp1) + (tp1_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp1-locked_entry)) + ")" +
          "\n 🎯 TP2: " + _p(locked_tp2) + (tp2_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp2-locked_entry)) + ")" +
          "\n 🚀 TP3: " + _p(locked_tp3) + (tp3_hit ? " ✅" : "") + "  (" + _pip_str(math.abs(locked_tp3-locked_entry)) + ")" +
-         (holder_mode_active ? "\n 🔱 VWAP Trail: " + _p(vap_current) : "") +
+         (holder_mode_active ? "\n 🔱 " + holder_trail_type + " Trail: " + _p(active_trail) : "") +
          "\n 📈 Peak: " + str.tostring(max_profit_pips, "#.##") + " " + pip_unit
 else
     tradeSection := "\n ⚪ Scanning for setup..."
@@ -2582,17 +2602,17 @@ if useAgentAlerts and barstate.isconfirmed and (trigger_signal or silence_broadc
              "Every loss is data. Reassessing now."
 
     else if holder_exit_event
-        event_title      := "🏁 HOLDER MODE EXIT — VWAP CROSSED"
+        event_title      := "🏁 HOLDER MODE EXIT — " + holder_trail_type + " CROSSED"
         event_commentary := "Direction: " + (trade_direction==1?"LONG":"SHORT") + "\n" +
-             "VWAP Trail crossed: " + _p(vap_current) + "\n" +
+             holder_trail_type + " Trail crossed: " + _p(active_trail) + "\n" +
              "Peak run: " + str.tostring(max_profit_pips,"#.##") + " " + pip_unit + "\n" +
              "Protocol: Close remaining position. Swing leg exhausted."
 
     else if tp3_alert_event
         event_title      := "🚀 TP3 HIT — HOLDER MODE ACTIVATED (2:1)"
         event_commentary := "Close 75% at TP3 (" + _p(locked_tp3) + ").\n" +
-             "Trail 25% using Adaptive VWAP: " + _p(vap_current) + "\n" +
-             "Exit fires when price crosses back through VWAP."
+             "Trail 25% using " + holder_trail_type + " line (" + _p(active_trail) + ").\n" +
+             "Exit fires when price crosses back through the " + holder_trail_type + " line."
 
     else if tp2_alert_event
         event_title      := "🎯🎯 TP2 HIT — MOVE STOP TO BREAKEVEN (1.5:1)"
@@ -2851,6 +2871,7 @@ if _daily_trigger
             _s4   := _t == "SYNC4"   ? _s4 + 1 : _s4
             _cc   := _t == "COUNTER" ? _cc + 1 : _cc
             _lc   := _t == "LOCAL"   ? _lc + 1 : _lc
+            float _np = array.get(dpt_net_pips, _i)
             string _oc = _slh ? "SL❌" : _t3h ? "TP3✅" : _t2h ? "TP2✅" : _t1h ? "TP1✅" : "OPEN⏳"
             if _slh
                 _sl := _sl + 1
@@ -2868,7 +2889,8 @@ if _daily_trigger
                 _wp := _wp + 1
             if _mx > _bp
                 _bp := _mx
-            _tlog := _tlog + str.tostring(_i+1) + ". " + (_d==1?"🟢L":"🔴S") + " ["+_t+"] Sc:"+str.tostring(_sc,"#.#")+" "+_oc+" pk:"+str.tostring(_mx,"#.#")+pip_unit+" "+str.tostring(_bc)+"bars\n"
+            string _np_str = na(_np) ? "—" : ((_np >= 0 ? "+" : "") + str.tostring(_np,"#.#") + pip_unit)
+            _tlog := _tlog + str.tostring(_i+1) + ". " + (_d==1?"🟢L":"🔴S") + " ["+_t+"] Sc:"+str.tostring(_sc,"#.#")+" "+_oc+" net:"+_np_str+" pk:"+str.tostring(_mx,"#.#")+pip_unit+" "+str.tostring(_bc)+"bars\n"
 
     int   _cls  = _t1 + _t2 + _t3 + _sl
     float _wr   = _cls > 0 ? float(_t1+_t2+_t3) / float(_cls) * 100 : 0.0
@@ -3118,6 +3140,31 @@ if short_exit_confirmed
 //     "🦞 Claw Trail: [MTF direction]" line in Core Signals panel
 //     "🎯 Confidence: XX% (need YY%)" line in Core Signals panel
 //     "🦞 Claw M5/M15/H1 arrow" line before MTF EMA block
+//
+// ADDITIONS IN v8.1 (Absolute Dollar Terminal — Migration Build):
+//
+//   ADDITION 9 — Full Super Payload (Section 14 + Entry Messages)
+//     Entry webhook now matches full TradeSgnl confirmed format:
+//     dollarrisk, entry, sl, tp1–tp3, betrig, bedist, trtrig, trdist, trstep,
+//     signal_type (SYNC4/COUNTER/LOCAL), conf (Claw %), py (pyramiding flag)
+//     locked_entry/bedist/sig_type declared before f_format_alert (CE10272 fix)
+//     locked_conf captured after Claw Confidence Engine runs (Section 20)
+//
+//   ADDITION 10 — Signal Holder Mode Kill Switch (Section 16)
+//     holder_trail_type option "VWAP" replaced with "Signal"
+//     active_trail = signal (34-period SMA/EMA of _bclose) when Signal selected
+//     signal_length default changed from 21 → 34
+//     Holder Mode exits when price crosses the 34-period signal line
+//     All VWAP Trail references in Glass Box events updated to holder_trail_type
+//
+//   ADDITION 11 — Net Pips Tracker / Full Orphan Trade Resolution (Section 16/22)
+//     dpt_exit_px  — actual exit price (locked_sl / close) per trade
+//     dpt_net_pips — signed net pips at exit: +positive = winner, -negative = loser
+//     dpt_entry_px moved to pre-Section-16 declarations (accessible in orphan fix)
+//     Orphan reversal: records close as exit_px, signed net pips vs entry
+//     SL exit: records locked_sl as exit_px
+//     Holder exit: records close as exit_px
+//     Daily report per-trade line now shows: net:<+/-X>pts pk:<X>pts <N>bars
 //
 // INHERITED FROM v7.0 (unchanged):
 //   Live Dollar P&L Tracker | PDH/PDL Context Engine | Tree-Format AI Narrative
