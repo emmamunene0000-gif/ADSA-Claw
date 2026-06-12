@@ -433,13 +433,13 @@ lq_labelSize      = input.string('Tiny', 'Labels Size',
 // ===========================================================================
 // TradeSgnl Alert Configuration
 // ===========================================================================
-long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
+long_entry_message  = input.string("LICENSE_ID,{{ticker}},buy,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Long Entry Message",  group="TradeSgnl Alert Messages", tooltip="Message sent when a long position is opened")
 long_tp1_message    = input.string("", "Long TP1 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 long_tp2_message    = input.string("", "Long TP2 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_tp3_message    = input.string("", "Long TP3 Message (Leave empty to suppress)",    group="TradeSgnl Alert Messages", inline="tp", tooltip="Leave blank: EA tracks TPs locally.")
 long_exit_message   = input.string("LICENSE_ID,{{ticker}},closebuy", "Long Exit Message",   group="TradeSgnl Alert Messages", tooltip="Message sent when SL or Trail Exit triggers.")
 
-short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,vol_dollar={{risk}},sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
+short_entry_message = input.string("LICENSE_ID,{{ticker}},sell,sl_price={{sl}},tp1_price={{tp1}},pct1=0.33,tp2_price={{tp2}},pct2=0.50,tp3_price={{tp3}},exent=1", "Short Entry Message", group="TradeSgnl Alert Messages", tooltip="Message sent when a short position is opened")
 short_tp1_message   = input.string("", "Short TP1 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", tooltip="Leave blank: TradeSgnl natively handles partial closures on MT5.")
 short_tp2_message   = input.string("", "Short TP2 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
 short_tp3_message   = input.string("", "Short TP3 Message (Leave empty to suppress)",   group="TradeSgnl Alert Messages", inline="tps", tooltip="Leave blank: EA tracks TPs locally.")
