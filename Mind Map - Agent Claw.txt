@@ -63,69 +63,102 @@ MT5 (Deriv / Bybit)
       └── Partial closes at pct1=0.33 (TP1) and pct2=0.50 (TP2)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SECTION 2 — PINE SCRIPT INTELLIGENCE LAYERS
+SECTION 2 — PINE SCRIPT INTELLIGENCE LAYERS (AS-CODED)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TRIGGER → GATE → CONFLUENCE → CONFIDENCE → EXECUTION
+⚠️  NOTE: The architecture below reflects what the code ACTUALLY does
+    as audited in the Pine Script. It differs from the intended Claw
+    Protocol design in three key ways — see SECTION 2B for the delta.
+
+ACTUAL GATE CHAIN (primary ATM path):
 
 ┌─────────────────────────────────────────────────────┐
 │  TRIGGER: ATM Bot (UT Bot Oscillator)               │
-│  WHEN to consider a trade — not WHICH WAY           │
-│  Buy signal: close crosses above ATM line           │
-│  Sell signal: close crosses below ATM line          │
+│  buy_signal / sell_signal                           │
+│  buy_signal_raw = src > trail AND above crossover  │
+│  buy_signal     = buy_signal_raw AND barstate.isconfirmed
 └─────────────────────┬───────────────────────────────┘
-                      ↓
+                      ↓ AND
 ┌─────────────────────────────────────────────────────┐
-│  GATE 1: Claw Direction                             │
-│  Ratcheting ATR trail around 200 EMA               │
-│  Trail direction = ALLOWED trade direction          │
-│  Bull trail → only longs allowed                   │
-│  Bear trail → only shorts allowed                  │
-│  This is the TRUTH gate — not a trigger             │
+│  HARD GATE 1: RSI Regime                           │
+│  bullishRegime = RSI momentum positive              │
+│  enableRegimeFilter = true → blocks signal          │
+│  buy_signal_filtered = buy_signal AND regimeBullish │
 └─────────────────────┬───────────────────────────────┘
-                      ↓
+                      ↓ AND (if requireVWAP=true)
 ┌─────────────────────────────────────────────────────┐
-│  GATE 2: Regime Filter                              │
-│  LinReg candle trend regime must align              │
-│  Bull regime required for longs                    │
-│  Bear regime required for shorts                   │
+│  HARD GATE 2: VWAP (conditional)                   │
+│  regimeBullish := (regimeBullish AND vwapBullish)  │
+│  Default OFF. When ON = hard AND gate, blocks signal│
 └─────────────────────┬───────────────────────────────┘
-                      ↓
+                      ↓ AND (if requireFibTrend=true)
 ┌─────────────────────────────────────────────────────┐
-│  CONFLUENCE (scored, not hard-gated in v8.1+)      │
-│  VWAP direction      [weight 1.0]                  │
-│  Fib trend           [weight 0.5]                  │
-│  RSI position        [weight 1.0]                  │
-│  Claw MTF alignment  [weight 1.5]  ← highest       │
-│  Volume Profile      [weight 0.5]                  │
-│  SMC Structure       [weight 1.0]                  │
-│                                                     │
-│  Key insight: VWAP and Fib SCORE the confidence.   │
-│  They no longer BLOCK the trade in Claw Protocol.  │
+│  HARD GATE 3: Fib Trend (conditional)              │
+│  regimeBullish := (regimeBullish AND trend_fib==1) │
+│  Default ON. When ON = hard AND gate, blocks signal │
 └─────────────────────┬───────────────────────────────┘
-                      ↓
+                      ↓ AND
 ┌─────────────────────────────────────────────────────┐
-│  CONFIDENCE ENGINE                                  │
-│  Modes: Conservative 70% / Moderate 60% / Aggressive 50%
-│  claw_bull_conf / claw_bear_conf computed           │
-│  Signal fires only if conf ≥ threshold             │
-│  locked_conf captured AFTER Section 20 narrative   │
-└─────────────────────┬───────────────────────────────┘
-                      ↓
-┌─────────────────────────────────────────────────────┐
-│  SIGNAL CLASSIFICATION                              │
-│  SYNC4   → all 4 fractal layers aligned            │
-│  COUNTER → sovereign layer counter to trade        │
-│  LOCAL   → exec TF only, no upper alignment        │
-│                                                     │
-│  locked_sig_type captured at signal bar            │
+│  DEDUP GATE: posState machine                      │
+│  posState == 1 AND posState[1] <= 0                │
+│  Prevents double-entry in same direction            │
 └─────────────────────┬───────────────────────────────┘
                       ↓
 ┌─────────────────────────────────────────────────────┐
 │  EXECUTION: strategy.entry() + Super Payload        │
-│  Fire-and-forget: full trade rulebook in one string │
-│  EA handles: lots, SL, TPs, BE, trail, partials    │
+│  buy_signal_confirmed fires, trade opens            │
+│  locked_ vars captured: entry, SL, TPs, conf, type │
 └─────────────────────────────────────────────────────┘
+
+PARALLEL (informational — do NOT gate primary execution):
+
+  Claw MTF Trail      → Confidence Engine input (scored, not gating)
+  Confidence Engine   → claw_bull_conf % (display + Telegram + dashboard)
+  Fractal 4-Layer     → master_sync_buy → SYNC4/COUNTER/LOCAL label
+
+SECONDARY TRIGGER PATH (Smart RSI signals):
+  buy_signal_confirmed = ... OR
+    (newSmartBull AND claw_exec_bull AND regimeBullish AND posState<=0)
+
+  ← Here the Claw DOES gate: Smart signals require claw_exec_bull=true
+  ← This is how the intended architecture leaks in for RSI extreme signals
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2B — DELTA vs. INTENDED CLAW PROTOCOL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+The intended Claw Protocol architecture (from `Liquidity Claw` reference):
+  ATM Bot → CLAW GATES DIRECTION → Confidence → Execution
+
+What v8 actually does:
+  ATM Bot → RSI/VWAP/Fib GATES → Execution
+  Claw → feeds Confidence score (informational only)
+
+Three documented gaps:
+
+GAP 1 — CLAW NOT A HARD GATE FOR PRIMARY SIGNALS
+  Documented: "Claw Direction = GATE #1"
+  Reality: Claw trail (claw_exec_bull) is NOT in buy_signal_confirmed
+            for the primary ATM path. A buy CAN fire when claw is bearish.
+            Claw only gates Smart RSI secondary path.
+  Fix needed: Add `AND claw_exec_bull` to primary buy_signal_filtered
+              to fully implement Claw Protocol intent.
+
+GAP 2 — VWAP AND FIB ARE HARD GATES, NOT SOFT CONFLUENCE
+  Documented: "VWAP + Fib → scored, not hard-gated"
+  Reality: When requireVWAP=true or requireFibTrend=true, these are
+            hard AND conditions in regimeBullish — they BLOCK signals.
+            They are ALSO scored in Confidence Engine (dual role).
+  No fix needed: inputs toggle their gate behavior correctly.
+                 Just correct the documentation.
+
+GAP 3 — CONFIDENCE ENGINE DOES NOT GATE EXECUTION
+  Documented: "Signal fires only if conf ≥ threshold"
+  Reality: claw_bull_pass / claw_bear_pass are computed but
+            NEVER checked before strategy.entry(). Confidence % is
+            display and Telegram only. Threshold is purely informational.
+  Fix needed: If we want the Confidence Engine to gate execution,
+              add `AND claw_bull_pass` to buy_signal_confirmed.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SECTION 3 — SUPER PAYLOAD (confirmed format)

@@ -95,28 +95,41 @@ Telegram Channel
 | **10 — Signal Holder Kill Switch** | 34-period EMA of `_bclose` replaces VWAP as holder mode exit |
 | **11 — Net Pips Tracker / Orphan Fix** | DPT arrays track actual exit price + signed net pips; orphan trades resolved at reversal bar |
 
-### Architecture: TRIGGER → GATE → CONFLUENCE → CONFIDENCE → EXECUTION
+### Architecture: Actual Gate Chain (as-coded, v8.1)
+
+> ⚠️ The intended Claw Protocol design (Claw = gate #1) is not fully implemented in v8. Three documented gaps below. This is what the code actually does.
 
 ```
-ATM Bot (UT Bot)          TRIGGER: WHEN to consider a trade
+ATM Bot (UT Bot)          TRIGGER — buy/sell_signal raw
+    ↓ AND
+RSI Regime                HARD GATE #1 (always, if enableRegimeFilter=true)
+    ↓ AND (if requireVWAP=true)
+VWAP Direction            HARD GATE #2 (conditional — default OFF)
+    ↓ AND (if requireFibTrend=true)
+Fib Trend                 HARD GATE #3 (conditional — default ON)
+    ↓ AND
+posState flip             DEDUP GATE — prevents same-direction double entry
     ↓
-Claw Direction            GATE 1: Directional TRUTH (trail direction = allowed side)
-Regime Filter             GATE 2: Trend regime must align
-    ↓
-VWAP + Fib + RSI          CONFLUENCE: Score the setup (not hard gates in v8.1+)
-MACD + Vol + SMC          Weighted factors for Confidence Engine
-    ↓
-Confidence Engine         6-factor weighted score → claw_bull_conf / claw_bear_conf
-(threshold: 60% default)  Threshold: Conservative 70% / Moderate 60% / Aggressive 50%
-    ↓
-Signal Classification:    SYNC4   — all 4 fractal layers aligned
-  SYNC4 / COUNTER / LOCAL COUNTER — sovereign layer against trade direction
-                          LOCAL   — exec TF only, no upper-layer alignment
-    ↓
-locked_ vars captured     entry, SL, BE pips, trail pips, conf%, signal_type
-    ↓
-strategy.entry()          EXECUTION: fires Super Payload webhook to TradeSgnl EA
+strategy.entry()          EXECUTION → Super Payload → TradeSgnl EA
+
+─── PARALLEL (informational, does NOT gate primary execution) ───
+Claw MTF Trail            → scored in Confidence Engine (not a blocker)
+Confidence Engine         → claw_bull_conf % (display + Telegram only)
+Fractal 4-Layer           → SYNC4/COUNTER/LOCAL label for signal_type
 ```
+
+**Smart RSI secondary path** (where Claw IS a gate):
+```
+newSmartBull AND claw_exec_bull AND regimeBullish AND posState<=0
+```
+
+### Three Known Gaps vs. Intended Claw Protocol
+
+| Gap | Documented | Reality | Fix |
+|-----|-----------|---------|-----|
+| Claw as gate | "Claw = GATE #1 for all signals" | Claw only gates Smart RSI path, NOT primary ATM path | Add `claw_exec_bull` to primary `buy_signal_filtered` |
+| VWAP/Fib | "scored, not hard-gated" | ARE hard gates when `requireVWAP`/`requireFibTrend` = true | Correct documentation |
+| Confidence | "signal fires only if conf ≥ threshold" | `claw_bull_pass` computed but never checked before `strategy.entry()` — display only | Add `AND claw_bull_pass` to `buy_signal_confirmed` |
 
 ### Super Payload Format
 
