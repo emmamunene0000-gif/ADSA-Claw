@@ -475,6 +475,11 @@ f_alert_p(float val) =>
         float t = math.abs(val)
         t >= 100 ? str.tostring(val, "#.##") : t >= 2 ? str.tostring(val, "#.####") : str.tostring(val, "#.#####")
 
+// Must be declared before f_format_alert so the function can reference them
+var float locked_be_pips = na
+var float locked_trdist  = na
+var float locked_trstep  = na
+
 f_format_alert(string template, float vol, float sl, float tp1, float tp2, float tp3, float risk) =>
     string res = template
     if res != ""
@@ -1273,9 +1278,6 @@ var float locked_sl            = na
 var float locked_risk_dist     = na
 var float locked_position_size = na
 var float locked_actual_risk   = na
-var float locked_be_pips       = na
-var float locked_trdist        = na
-var float locked_trstep        = na
 var int   trade_direction      = 0
 var bool  trade_active         = false
 
@@ -1475,8 +1477,10 @@ bool tp1_alert_event    = tp1_hit  and not tp1_hit[1]  and barstate.isconfirmed
 bool tp2_alert_event    = tp2_hit  and not tp2_hit[1]  and barstate.isconfirmed
 bool tp3_alert_event    = tp3_hit  and not tp3_hit[1]  and barstate.isconfirmed
 bool sl_alert_event     = sl_hit_flag and not sl_hit_flag[1] and barstate.isconfirmed
-bool holder_exit_long   = holder_mode_active and trade_direction ==  1 and ta.crossunder(close, active_trail) and barstate.isconfirmed
-bool holder_exit_short  = holder_mode_active and trade_direction == -1 and ta.crossover(close, active_trail)  and barstate.isconfirmed
+bool _trail_crossunder  = ta.crossunder(close, active_trail)
+bool _trail_crossover   = ta.crossover(close, active_trail)
+bool holder_exit_long   = holder_mode_active and trade_direction ==  1 and _trail_crossunder and barstate.isconfirmed
+bool holder_exit_short  = holder_mode_active and trade_direction == -1 and _trail_crossover  and barstate.isconfirmed
 bool holder_exit_event  = (holder_exit_long or holder_exit_short) and not na(active_trail)
 bool rejection_alert    = (buy_rejected or sell_rejected) and barstate.isconfirmed
 
